@@ -1,188 +1,18 @@
 // Created by https://www.linkedin.com/in/przemek2122/ 2026
 
-#include "EncryptionUtil.h"
-#include <unordered_set>
+#include "SQRLLEncryption.h"
+
 #include <algorithm>
+#include <array>
+#include <cstring>
+#include <queue>
+#include <random>
+#include <numbers>
+#include <iostream>
+#include <ranges>
+#include <unordered_map>
 
-FHuffmanNode::FHuffmanNode(uint8_t D, uint32_t F)
-	: Data(D)
-	, Frequency(F)
-	, Left(nullptr)
-	, Right(nullptr)
-{
-}
-
-FHuffmanNode::~FHuffmanNode()
-{
-	delete Left;
-	delete Right;
-}
-
-std::vector<uint8_t> FHuffmanCompressor::Compress(const std::vector<uint8_t>& Input)
-{
-	if (Input.empty()) return {};
-
-	std::map<uint8_t, uint32_t> Frequencies;
-	for (uint8_t Byte : Input)
-	{
-		Frequencies[Byte]++;
-	}
-
-	auto Compare = [](FHuffmanNode* A, FHuffmanNode* B)
-	{
-		return A->Frequency > B->Frequency;
-	};
-	std::priority_queue<FHuffmanNode*, std::vector<FHuffmanNode*>, decltype(Compare)> Queue(Compare);
-
-	for (auto& Pair : Frequencies)
-	{
-		Queue.push(new FHuffmanNode(Pair.first, Pair.second));
-	}
-
-	while (Queue.size() > 1)
-	{
-		FHuffmanNode* Left = Queue.top(); Queue.pop();
-		FHuffmanNode* Right = Queue.top(); Queue.pop();
-
-		FHuffmanNode* Parent = new FHuffmanNode(0, Left->Frequency + Right->Frequency);
-		Parent->Left = Left;
-		Parent->Right = Right;
-		Queue.push(Parent);
-	}
-
-	FHuffmanNode* Root = Queue.top();
-
-	std::map<uint8_t, std::string> Codes;
-	FHuffmanCompressor::GenerateCodes(Root, "", Codes);
-
-	std::string BitString;
-	for (uint8_t Byte : Input)
-	{
-		BitString += Codes[Byte];
-	}
-
-	std::vector<uint8_t> Compressed;
-
-	Compressed.push_back(static_cast<uint8_t>(Frequencies.size()));
-	for (auto& Pair : Frequencies)
-	{
-		Compressed.push_back(Pair.first);
-
-		for (int i = 0; i < 4; ++i) {
-			Compressed.push_back((Pair.second >> (i * 8)) & 0xFF);
-		}
-	}
-
-	uint32_t BitCount = BitString.size();
-	for (int i = 0; i < 4; ++i)
-	{
-		Compressed.push_back((BitCount >> (i * 8)) & 0xFF);
-	}
-
-	for (size_t i = 0; i < BitString.size(); i += 8)
-	{
-		uint8_t Byte = 0;
-		for (int j = 0; j < 8 && i + j < BitString.size(); ++j)
-		{
-			if (BitString[i + j] == '1')
-			{
-				Byte |= (1 << (7 - j));
-			}
-		}
-		Compressed.push_back(Byte);
-	}
-
-	delete Root;
-	return Compressed;
-}
-
-std::vector<uint8_t> FHuffmanCompressor::Decompress(const std::vector<uint8_t>& Compressed)
-{
-	size_t Pos = 0;
-
-	uint8_t TableSize = Compressed[Pos++];
-	std::map<uint8_t, uint32_t> Frequencies;
-
-	for (uint8_t i = 0; i < TableSize; ++i)
-	{
-		uint8_t Byte = Compressed[Pos++];
-		uint32_t Freq = 0;
-		for (int j = 0; j < 4; ++j)
-		{
-			Freq |= (static_cast<uint32_t>(Compressed[Pos++]) << (j * 8));
-		}
-		Frequencies[Byte] = Freq;
-	}
-
-	uint32_t BitCount = 0;
-	for (int i = 0; i < 4; ++i)
-	{
-		BitCount |= (static_cast<uint32_t>(Compressed[Pos++]) << (i * 8));
-	}
-
-	auto Compare = [](FHuffmanNode* A, FHuffmanNode* B)
-	{
-		return A->Frequency > B->Frequency;
-	};
-	std::priority_queue<FHuffmanNode*, std::vector<FHuffmanNode*>, decltype(Compare)> Queue(Compare);
-
-	for (auto& Pair : Frequencies)
-	{
-		Queue.push(new FHuffmanNode(Pair.first, Pair.second));
-	}
-
-	while (Queue.size() > 1)
-	{
-		FHuffmanNode* Left = Queue.top(); Queue.pop();
-		FHuffmanNode* Right = Queue.top(); Queue.pop();
-
-		FHuffmanNode* Parent = new FHuffmanNode(0, Left->Frequency + Right->Frequency);
-		Parent->Left = Left;
-		Parent->Right = Right;
-		Queue.push(Parent);
-	}
-
-	FHuffmanNode* Root = Queue.top();
-
-	std::vector<uint8_t> Decompressed;
-	FHuffmanNode* Current = Root;
-	uint32_t BitIndex = 0;
-
-	while (BitIndex < BitCount)
-	{
-		uint8_t Byte = Compressed[Pos + BitIndex / 8];
-		bool Bit = (Byte >> (7 - (BitIndex % 8))) & 1;
-
-		Current = Bit ? Current->Right : Current->Left;
-
-		if (!Current->Left && !Current->Right)
-		{
-			Decompressed.push_back(Current->Data);
-			Current = Root;
-		}
-
-		BitIndex++;
-	}
-
-	delete Root;
-	return Decompressed;
-}
-
-void FHuffmanCompressor::GenerateCodes(FHuffmanNode* Node, std::string Code, std::map<uint8_t, std::string>& Codes)
-{
-	if (!Node) return;
-
-	if (!Node->Left && !Node->Right)
-	{
-		Codes[Node->Data] = Code.empty() ? "0" : Code;
-		return;
-	}
-
-	GenerateCodes(Node->Left, Code + "0", Codes);
-	GenerateCodes(Node->Right, Code + "1", Codes);
-}
-
-void FXORCascade::CascadeForward(std::vector<uint8_t>& Data)
+void SQRLLXORCascade::CascadeForward(std::vector<uint8_t>& Data)
 {
 	for (size_t i = 1; i < Data.size(); ++i)
 	{
@@ -190,7 +20,7 @@ void FXORCascade::CascadeForward(std::vector<uint8_t>& Data)
 	}
 }
 
-void FXORCascade::CascadeBackward(std::vector<uint8_t>& Data)
+void SQRLLXORCascade::CascadeBackward(std::vector<uint8_t>& Data)
 {
 	for (size_t i = Data.size() - 1; i > 0; --i)
 	{
@@ -198,7 +28,7 @@ void FXORCascade::CascadeBackward(std::vector<uint8_t>& Data)
 	}
 }
 
-void FXORCascade::FullDiffusion(std::vector<uint8_t>& Data, int Rounds)
+void SQRLLXORCascade::FullDiffusion(std::vector<uint8_t>& Data, int Rounds)
 {
 	for (int Round = 0; Round < Rounds; ++Round)
 	{
@@ -216,17 +46,17 @@ void FXORCascade::FullDiffusion(std::vector<uint8_t>& Data, int Rounds)
 	}
 }
 
-uint8_t FBitRotation::RotateLeft(uint8_t Value, int Bits)
+uint8_t SQRLLBitRotation::RotateLeft(uint8_t Value, int Bits)
 {
 	return (Value << Bits) | (Value >> (8 - Bits));
 }
 
-uint8_t FBitRotation::RotateRight(uint8_t Value, int Bits)
+uint8_t SQRLLBitRotation::RotateRight(uint8_t Value, int Bits)
 {
 	return (Value >> Bits) | (Value << (8 - Bits));
 }
 
-void FBitRotation::RotateDependingOnKey(std::vector<uint8_t>& Data, const std::vector<uint8_t>& Key)
+void SQRLLBitRotation::RotateDependingOnKey(std::vector<uint8_t>& Data, const std::vector<uint8_t>& Key)
 {
 	for (size_t i = 0; i < Data.size(); ++i)
 	{
@@ -235,7 +65,7 @@ void FBitRotation::RotateDependingOnKey(std::vector<uint8_t>& Data, const std::v
 	}
 }
 
-void FBitRotation::UnrotateDependingOnKey(std::vector<uint8_t>& Data, const std::vector<uint8_t>& Key)
+void SQRLLBitRotation::UnrotateDependingOnKey(std::vector<uint8_t>& Data, const std::vector<uint8_t>& Key)
 {
 	for (size_t i = 0; i < Data.size(); ++i)
 	{
@@ -244,7 +74,60 @@ void FBitRotation::UnrotateDependingOnKey(std::vector<uint8_t>& Data, const std:
 	}
 }
 
-std::vector<uint64_t> FPredefinedXORMasks::GetEightMasks()
+std::vector<uint64_t> SQRLLChunkConverter::BytesToChunks(const std::vector<uint8_t>& Bytes)
+{
+	std::vector<uint64_t> Chunks;
+
+	// Process full 8-byte chunks
+	for (size_t i = 0; i + 7 < Bytes.size(); i += 8)
+	{
+		uint64_t Chunk = 0;
+
+		// Combine 8 bytes into uint64_t (little-endian)
+		for (int j = 0; j < 8; ++j)
+		{
+			Chunk |= (static_cast<uint64_t>(Bytes[i + j]) << (j * 8));
+		}
+
+		Chunks.push_back(Chunk);
+	}
+
+	// Handle remaining bytes (less than 8)
+	size_t Remaining = Bytes.size() % 8;
+	if (Remaining > 0)
+	{
+		uint64_t LastChunk = 0;
+		size_t StartIndex = Bytes.size() - Remaining;
+
+		for (size_t j = 0; j < Remaining; ++j)
+		{
+			LastChunk |= (static_cast<uint64_t>(Bytes[StartIndex + j]) << (j * 8));
+		}
+
+		Chunks.push_back(LastChunk);
+	}
+
+	return Chunks;
+}
+
+std::vector<uint8_t> SQRLLChunkConverter::ChunksToBytes(const std::vector<uint64_t>& Chunks, size_t OriginalSize)
+{
+	std::vector<uint8_t> Bytes;
+	Bytes.reserve(OriginalSize);
+
+	for (uint64_t Chunk : Chunks)
+	{
+		// Extract 8 bytes from uint64_t
+		for (int i = 0; i < 8 && Bytes.size() < OriginalSize; ++i)
+		{
+			Bytes.push_back(static_cast<uint8_t>(Chunk >> (i * 8)));
+		}
+	}
+
+	return Bytes;
+}
+
+std::vector<uint64_t> SQRLLPredefinedXORMasks::GetEightMasks()
 {
 	std::vector<uint64_t> AllMasks = {
 		ALTERNATING_1,
@@ -261,23 +144,23 @@ std::vector<uint64_t> FPredefinedXORMasks::GetEightMasks()
 	return AllMasks;
 }
 
-Uint64 FBitFlipping::FlipBits(uint64_t InValue, const Uint64 FlipMask)
+uint64_t SQRLLBitFlipping::FlipBits(uint64_t InValue, const uint64_t FlipMask)
 {
 	// XOR mask: alternating bit pattern for reproducible flipping
 	return InValue ^ FlipMask;
 }
 
-std::vector<uint8_t> FBitFlipping::FlipData(const std::vector<uint8_t>& InFlipData, const std::vector<uint8_t>& FlipKey)
+std::vector<uint8_t> SQRLLBitFlipping::FlipData(const std::vector<uint8_t>& InFlipData, const std::vector<uint8_t>& FlipKey)
 {
 	std::vector<uint8_t> OutData;
-	std::vector<uint64_t> Masks = FPredefinedXORMasks::GetEightMasks();
+	std::vector<uint64_t> Masks = SQRLLPredefinedXORMasks::GetEightMasks();
 
-	std::vector<uint64_t> InFlipData64Array = FChunkConverter::BytesToChunks(InFlipData);
-	std::vector<uint64_t> FlipKey64Array = FChunkConverter::BytesToChunks(FlipKey);
+	std::vector<uint64_t> InFlipData64Array = SQRLLChunkConverter::BytesToChunks(InFlipData);
+	std::vector<uint64_t> FlipKey64Array = SQRLLChunkConverter::BytesToChunks(FlipKey);
 
 	if (Masks.size() == 8)
 	{
-		for (uint32 i = 0; i < InFlipData64Array.size(); i++)
+		for (uint32_t i = 0; i < InFlipData64Array.size(); i++)
 		{
 			uint64_t FlipData64 = InFlipData64Array[i];
 			const uint64_t& FlipKeyData64 = FlipKey64Array[i % FlipKey.size()];
@@ -286,12 +169,12 @@ std::vector<uint8_t> FBitFlipping::FlipData(const std::vector<uint8_t>& InFlipDa
 		}
 	}
 
-	OutData = FChunkConverter::ChunksToBytes(InFlipData64Array, InFlipData.size());
+	OutData = SQRLLChunkConverter::ChunksToBytes(InFlipData64Array, InFlipData.size());
 
 	return OutData;
 }
 
-void FShuffle::Forward(std::vector<uint8_t>& InputBytes, const std::vector<uint8_t>& EncryptionKeyBytes)
+void SQRLLShuffle::Forward(std::vector<uint8_t>& InputBytes, const std::vector<uint8_t>& EncryptionKeyBytes)
 {
 	if (InputBytes.empty() || EncryptionKeyBytes.empty())
 	{
@@ -306,7 +189,7 @@ void FShuffle::Forward(std::vector<uint8_t>& InputBytes, const std::vector<uint8
 	std::shuffle(InputBytes.begin(), InputBytes.end(), Rng);
 }
 
-void FShuffle::Backward(std::vector<uint8_t>& InputBytes, const std::vector<uint8_t>& EncryptionKeyBytes)
+void SQRLLShuffle::Backward(std::vector<uint8_t>& InputBytes, const std::vector<uint8_t>& EncryptionKeyBytes)
 {
 	if (InputBytes.empty() || EncryptionKeyBytes.empty())
 	{
@@ -340,11 +223,11 @@ void FShuffle::Backward(std::vector<uint8_t>& InputBytes, const std::vector<uint
 	InputBytes = Result;
 }
 
-uint64_t FShuffle::GenerateSeed(const std::vector<uint8_t>& EncryptionKeyBytes)
+uint64_t SQRLLShuffle::GenerateSeed(const std::vector<uint8_t>& EncryptionKeyBytes)
 {
 	uint64_t Seed = 5381; // DJB2 hash initial value
 
-	for (uint8_t Byte : EncryptionKeyBytes)
+	for (const uint8_t Byte : EncryptionKeyBytes)
 	{
 		Seed = ((Seed << 5) + Seed) + Byte; // Hash = Hash * 33 + Byte
 	}
@@ -352,7 +235,7 @@ uint64_t FShuffle::GenerateSeed(const std::vector<uint8_t>& EncryptionKeyBytes)
 	return Seed;
 }
 
-void FFeistelCipher::FeistelRound(std::vector<uint8_t>& Data, const std::vector<uint8_t>& Key, int Round)
+void SQRLLFeistelCipher::FeistelRound(std::vector<uint8_t>& Data, const std::vector<uint8_t>& Key, int Round)
 {
 	size_t Half = Data.size() / 2;
 
@@ -373,7 +256,7 @@ void FFeistelCipher::FeistelRound(std::vector<uint8_t>& Data, const std::vector<
 	std::copy(Right.begin(), Right.end(), Data.begin() + Half);
 }
 
-void FFeistelCipher::Encrypt(std::vector<uint8_t>& Data, const std::vector<uint8_t>& Key)
+void SQRLLFeistelCipher::Encrypt(std::vector<uint8_t>& Data, const std::vector<uint8_t>& Key)
 {
 	for (int Round = 0; Round < 4; ++Round)
 	{
@@ -381,7 +264,7 @@ void FFeistelCipher::Encrypt(std::vector<uint8_t>& Data, const std::vector<uint8
 	}
 }
 
-void FFeistelCipher::Decrypt(std::vector<uint8_t>& Data, const std::vector<uint8_t>& Key)
+void SQRLLFeistelCipher::Decrypt(std::vector<uint8_t>& Data, const std::vector<uint8_t>& Key)
 {
 	for (int Round = 3; Round >= 0; --Round)
 	{
@@ -389,7 +272,7 @@ void FFeistelCipher::Decrypt(std::vector<uint8_t>& Data, const std::vector<uint8
 	}
 }
 
-std::vector<uint8_t> FFeistelCipher::FFunction(const std::vector<uint8_t>& Input, const std::vector<uint8_t>& Key,
+std::vector<uint8_t> SQRLLFeistelCipher::FFunction(const std::vector<uint8_t>& Input, const std::vector<uint8_t>& Key,
 	int Round)
 {
 	std::vector<uint8_t> Result = Input;
@@ -404,13 +287,13 @@ std::vector<uint8_t> FFeistelCipher::FFunction(const std::vector<uint8_t>& Input
 	return Result;
 }
 
-uint8_t FFeistelCipher::RotateLeft(uint8_t Value, int Bits)
+uint8_t SQRLLFeistelCipher::RotateLeft(uint8_t Value, int Bits)
 {
 	Bits %= 8;
 	return (Value << Bits) | (Value >> (8 - Bits));
 }
 
-std::string FEncryptionUtil::GenerateSecureSalt(const size_t Length)
+std::string SQRLLEncryption::GenerateSecureSalt(const size_t Length)
 {
 	std::random_device rd;  // Hardware entropy
 	std::mt19937 gen(rd()); // Seed with hardware randomness
@@ -424,13 +307,21 @@ std::string FEncryptionUtil::GenerateSecureSalt(const size_t Length)
 	return salt;
 }
 
-std::string FEncryptionUtil::EncryptDataCustom(const std::string& InData, const std::string& InEncryptionKey, const FEncryptionSettings& EncryptionSettings)
+SQRLLEncryption::FEncryptionSettings::FEncryptionSettings(std::string InEncryptionWord,
+	const int32_t InRandomIVSize, const int32_t InNumberOfOperations)
+	: EncryptionWord(std::move(InEncryptionWord))
+	, RandomIVSize(InRandomIVSize)
+	, NumberOfOperations(InNumberOfOperations)
+{
+}
+
+std::string SQRLLEncryption::EncryptDataCustom(const std::string& InData, const std::string& InEncryptionKey, const FEncryptionSettings& EncryptionSettings)
 {
 	std::string Out = InData;
 
 	if (InEncryptionKey.size() > 16)
 	{
-		const int32 NumberOfIV = EncryptionSettings.RandomIVSize + static_cast<int32>(InEncryptionKey.size());
+		const int32_t NumberOfIV = EncryptionSettings.RandomIVSize + static_cast<int32_t>(InEncryptionKey.size());
 		const std::vector<uint8_t> KeyIV = GenerateRandomIV(NumberOfIV);
 
 		// 0 Add EncryptionWord and IV
@@ -446,16 +337,16 @@ std::string FEncryptionUtil::EncryptDataCustom(const std::string& InData, const 
 		InputBytes = AddRandomBytes(InputBytes, InEncryptionKey);
 
 		// 3. Let's do some shuffle
-		FShuffle::Forward(InputBytes, EncryptionKeyBytes);
+		SQRLLShuffle::Forward(InputBytes, EncryptionKeyBytes);
 
 		// XOR Operations
-		for (int32 i = 0; i < EncryptionSettings.NumberOfOperations; i++)
+		for (int32_t i = 0; i < EncryptionSettings.NumberOfOperations; i++)
 		{
 			// Base encryption
 			InputBytes = BasicEncryptionWork(InputBytes, EncryptionKeyBytes);
 
-			FBitFlipping::FlipData(InputBytes, EncryptionKeyBytes);
-			FXORCascade::CascadeForward(InputBytes);
+			SQRLLBitFlipping::FlipData(InputBytes, EncryptionKeyBytes);
+			SQRLLXORCascade::CascadeForward(InputBytes);
 			std::ranges::reverse(InputBytes.begin(), InputBytes.end());
 		}
 
@@ -467,7 +358,7 @@ std::string FEncryptionUtil::EncryptDataCustom(const std::string& InData, const 
 	return Out;
 }
 
-std::string FEncryptionUtil::DecryptDataCustom(const std::string& InData, const std::string& InEncryptionKey, const FEncryptionSettings& EncryptionSettings)
+std::string SQRLLEncryption::DecryptDataCustom(const std::string& InData, const std::string& InEncryptionKey, const FEncryptionSettings& EncryptionSettings)
 {
 	std::string Out = InData;
 
@@ -477,18 +368,18 @@ std::string FEncryptionUtil::DecryptDataCustom(const std::string& InData, const 
 		const std::vector<uint8_t> EncryptionKeyBytes = StringToBytes(InEncryptionKey);
 
 		// Cascade XOR backward
-		for (int32 i = 0; i < EncryptionSettings.NumberOfOperations; i++)
+		for (int32_t i = 0; i < EncryptionSettings.NumberOfOperations; i++)
 		{
 			std::ranges::reverse(InputBytes.begin(), InputBytes.end());
-			FXORCascade::CascadeBackward(InputBytes);
-			FBitFlipping::FlipData(InputBytes, EncryptionKeyBytes);
+			SQRLLXORCascade::CascadeBackward(InputBytes);
+			SQRLLBitFlipping::FlipData(InputBytes, EncryptionKeyBytes);
 
 			// Base decryption
 			InputBytes = BasicDecryptionWork(InputBytes, EncryptionKeyBytes);
 		}
 
 		// 3. Let's undo shuffle
-		FShuffle::Backward(InputBytes, EncryptionKeyBytes);
+		SQRLLShuffle::Backward(InputBytes, EncryptionKeyBytes);
 
 		// 2. Remove random bytes
 		InputBytes = RemoveRandomBytes(InputBytes, InEncryptionKey);
@@ -505,7 +396,7 @@ std::string FEncryptionUtil::DecryptDataCustom(const std::string& InData, const 
 			Out.erase(SearchResult, EncryptionSettings.EncryptionWord.size());
 			if (PotentialEncryptionWord == EncryptionSettings.EncryptionWord)
 			{
-				const int32 NumberOfIV = EncryptionSettings.RandomIVSize + static_cast<int32>(InEncryptionKey.size());
+				const int32_t NumberOfIV = EncryptionSettings.RandomIVSize + static_cast<int32_t>(InEncryptionKey.size());
 
 				// Remove IV
 				Out.erase(0, NumberOfIV);
@@ -524,21 +415,21 @@ std::string FEncryptionUtil::DecryptDataCustom(const std::string& InData, const 
 	return Out;
 }
 
-Uint64 FEncryptionUtil::ConvertCharsIntoInt(char InCharArray[8])
+uint64_t SQRLLEncryption::ConvertCharsIntoInt(char InCharArray[8])
 {
-	Uint64 Result;
+	uint64_t Result;
 	memcpy(&Result, InCharArray, 8);
 	return Result;
 }
 
-std::array<char, 8> FEncryptionUtil::ConvertIntIntoChars(const Uint64 InData)
+std::array<char, 8> SQRLLEncryption::ConvertIntIntoChars(const uint64_t InData)
 {
 	std::array<char, 8> Result;
 	memcpy(Result.data(), &InData, 8);
 	return Result;
 }
 
-std::string FEncryptionUtil::FromBaseN(std::string_view InEncoded, std::string_view InCharSet)
+std::string SQRLLEncryption::FromBaseN(std::string_view InEncoded, std::string_view InCharSet)
 {
 	// Validate input
 	if (InCharSet.empty() || InEncoded.empty())
@@ -595,7 +486,7 @@ std::string FEncryptionUtil::FromBaseN(std::string_view InEncoded, std::string_v
 	return std::string(reinterpret_cast<const char*>(Result.data()), Result.size());
 }
 
-std::string FEncryptionUtil::ToBaseN(const std::string_view InData, const std::string_view InCharSet)
+std::string SQRLLEncryption::ToBaseN(const std::string_view InData, const std::string_view InCharSet)
 {
 	// Validate input
 	if (InCharSet.empty())
@@ -639,7 +530,7 @@ std::string FEncryptionUtil::ToBaseN(const std::string_view InData, const std::s
 	// Calculate minimum length to preserve all data
 	const size_t MinDigitsPerByte = static_cast<size_t>(
 		std::ceil(8.0 * std::numbers::ln2 / std::log(static_cast<double>(BaseSize)))
-		);
+	);
 	const size_t MinOutputLength = ByteCount * MinDigitsPerByte;
 
 	// Pad with leading zeros to ensure all data is represented
@@ -651,15 +542,15 @@ std::string FEncryptionUtil::ToBaseN(const std::string_view InData, const std::s
 	// Build result string (digits are in reverse order)
 	std::string Result;
 	Result.reserve(Digits.size());
-	for (auto it = Digits.rbegin(); it != Digits.rend(); ++it)
+	for (const unsigned long & Digit : std::ranges::reverse_view(Digits))
 	{
-		Result += InCharSet[*it];
+		Result += InCharSet[Digit];
 	}
 
 	return Result;
 }
 
-std::string FEncryptionUtil::ToBaseN_Irreversible(const std::string_view InData, const std::string_view InCharSet)
+std::string SQRLLEncryption::ToBaseN_Irreversible(const std::string_view InData, const std::string_view InCharSet)
 {
 	// Validate input
 	if (InCharSet.empty())
@@ -717,7 +608,7 @@ std::string FEncryptionUtil::ToBaseN_Irreversible(const std::string_view InData,
 	return Result;
 }
 
-std::string FEncryptionUtil::ToBaseNNum(uintmax_t InNumber, const std::string_view InCharSet)
+std::string SQRLLEncryption::ToBaseNNum(uintmax_t InNumber, const std::string_view InCharSet)
 {
 	// Validate input
 	if (InCharSet.empty())
@@ -753,7 +644,7 @@ std::string FEncryptionUtil::ToBaseNNum(uintmax_t InNumber, const std::string_vi
 	return Result;
 }
 
-uintmax_t FEncryptionUtil::FromBaseNNum(const std::string_view InEncoded, const std::string_view InCharSet)
+uintmax_t SQRLLEncryption::FromBaseNNum(const std::string_view InEncoded, const std::string_view InCharSet)
 {
 	// Validate input
 	if (InCharSet.empty() || InEncoded.empty())
@@ -788,17 +679,17 @@ uintmax_t FEncryptionUtil::FromBaseNNum(const std::string_view InEncoded, const 
 	return Result;
 }
 
-std::vector<uint8_t> FEncryptionUtil::BasicEncryptionWork(std::vector<uint8_t> InputBytes, const std::vector<uint8_t>& EncryptionKeyBytes)
+std::vector<uint8_t> SQRLLEncryption::BasicEncryptionWork(const std::vector<uint8_t>& InputBytes, const std::vector<uint8_t>& EncryptionKeyBytes)
 {
 	std::vector<uint8_t> OutBytes;
 
-	for (int32 InputBytesIndex = 0; InputBytesIndex < static_cast<int32>(InputBytes.size()); InputBytesIndex++)
+	for (int32_t InputBytesIndex = 0; InputBytesIndex < static_cast<int32_t>(InputBytes.size()); InputBytesIndex++)
 	{
-		const int32 EncryptionBytesIndex = InputBytesIndex % static_cast<int32>(EncryptionKeyBytes.size());
+		const int32_t EncryptionBytesIndex = InputBytesIndex % static_cast<int32_t>(EncryptionKeyBytes.size());
 
-		int32 Result = static_cast<int32>(InputBytes[InputBytesIndex]);
+		int32_t Result = static_cast<int32_t>(InputBytes[InputBytesIndex]);
 
-		Result = Result ^ static_cast<int32>(EncryptionKeyBytes[EncryptionBytesIndex]);
+		Result = Result ^ static_cast<int32_t>(EncryptionKeyBytes[EncryptionBytesIndex]);
 
 		OutBytes.push_back(static_cast<uint8_t>(InputBytes[InputBytesIndex]));
 	}
@@ -806,17 +697,17 @@ std::vector<uint8_t> FEncryptionUtil::BasicEncryptionWork(std::vector<uint8_t> I
 	return OutBytes;
 }
 
-std::vector<uint8_t> FEncryptionUtil::BasicDecryptionWork(std::vector<uint8_t> InputBytes, const std::vector<uint8_t>& EncryptionKeyBytes)
+std::vector<uint8_t> SQRLLEncryption::BasicDecryptionWork(std::vector<uint8_t> InputBytes, const std::vector<uint8_t>& EncryptionKeyBytes)
 {
 	std::vector<uint8_t> OutBytes;
 
-	for (int32 InputBytesIndex = 0; InputBytesIndex < static_cast<int32>(InputBytes.size()); InputBytesIndex++)
+	for (int32_t InputBytesIndex = 0; InputBytesIndex < static_cast<int32_t>(InputBytes.size()); InputBytesIndex++)
 	{
-		const int32 EncryptionBytesIndex = InputBytesIndex % static_cast<int32>(EncryptionKeyBytes.size());
+		const int32_t EncryptionBytesIndex = InputBytesIndex % static_cast<int32_t>(EncryptionKeyBytes.size());
 
-		int32 Result = static_cast<int32>(InputBytes[InputBytesIndex]);
+		int32_t Result = static_cast<int32_t>(InputBytes[InputBytesIndex]);
 
-		Result = Result ^ static_cast<int32>(EncryptionKeyBytes[EncryptionBytesIndex]);
+		Result = Result ^ static_cast<int32_t>(EncryptionKeyBytes[EncryptionBytesIndex]);
 
 		OutBytes.push_back(static_cast<uint8_t>(InputBytes[InputBytesIndex]));
 	}
@@ -824,26 +715,26 @@ std::vector<uint8_t> FEncryptionUtil::BasicDecryptionWork(std::vector<uint8_t> I
 	return OutBytes;
 }
 
-std::vector<uint8_t> FEncryptionUtil::AddRandomBytes(const std::vector<uint8_t>& InputBytes, const std::string& InEncryptionKey)
+std::vector<uint8_t> SQRLLEncryption::AddRandomBytes(const std::vector<uint8_t>& InputBytes, const std::string& InEncryptionKey)
 {
 	std::vector<uint8_t> OutBytes = InputBytes;
 
-	const int32 WhereAddRandom = FMath::Max(FMath::Abs(InEncryptionKey[0] % 5), 2);
-	for (int32 i = WhereAddRandom; i < static_cast<int32>(OutBytes.size()); i += WhereAddRandom + 1)
+	const int32_t WhereAddRandom = std::max(abs(InEncryptionKey[0] % 5), 2);
+	for (int32_t i = WhereAddRandom; i < static_cast<int32_t>(OutBytes.size()); i += WhereAddRandom + 1)
 	{
-		const uint8_t RandomInt = static_cast<uint8_t>(NormalizeByte((InEncryptionKey[i % InEncryptionKey.size()] ^ i) + static_cast<int32>(InEncryptionKey[i % InEncryptionKey.size()]) + static_cast<int32>(InEncryptionKey[WhereAddRandom])));
+		const uint8_t RandomInt = static_cast<uint8_t>(NormalizeByte((InEncryptionKey[i % InEncryptionKey.size()] ^ i) + static_cast<int32_t>(InEncryptionKey[i % InEncryptionKey.size()]) + static_cast<int32_t>(InEncryptionKey[WhereAddRandom])));
 		OutBytes.insert(OutBytes.begin() + i, RandomInt);
 	}
 
 	return OutBytes;
 }
 
-std::vector<uint8_t> FEncryptionUtil::RemoveRandomBytes(const std::vector<uint8_t>& InputBytes, const std::string& InEncryptionKey)
+std::vector<uint8_t> SQRLLEncryption::RemoveRandomBytes(const std::vector<uint8_t>& InputBytes, const std::string& InEncryptionKey)
 {
 	std::vector<uint8_t> OutBytes = InputBytes;
 
-	const int32 WhereAddRandom = FMath::Max(FMath::Abs(InEncryptionKey[0] % 5), 2);
-	for (int32 i = WhereAddRandom; i < static_cast<int32>(OutBytes.size()); i += WhereAddRandom)
+	const int32_t WhereAddRandom = std::max(abs(InEncryptionKey[0] % 5), 2);
+	for (int32_t i = WhereAddRandom; i < static_cast<int32_t>(OutBytes.size()); i += WhereAddRandom)
 	{
 		OutBytes.erase(OutBytes.begin() + i);
 	}
@@ -851,17 +742,17 @@ std::vector<uint8_t> FEncryptionUtil::RemoveRandomBytes(const std::vector<uint8_
 	return OutBytes;
 }
 
-std::vector<uint8_t> FEncryptionUtil::StringToBytes(const std::string& Str)
+std::vector<uint8_t> SQRLLEncryption::StringToBytes(const std::string& Str)
 {
 	return { Str.begin(), Str.end() };
 }
 
-std::string FEncryptionUtil::BytesToString(const std::vector<uint8_t>& Bytes)
+std::string SQRLLEncryption::BytesToString(const std::vector<uint8_t>& Bytes)
 {
 	return { Bytes.begin(), Bytes.end() };
 }
 
-int32 FEncryptionUtil::NormalizeByte(int32 InChar)
+int32_t SQRLLEncryption::NormalizeByte(int32_t InChar)
 {
 	if (InChar > UINT8_MAX)
 	{
@@ -876,14 +767,14 @@ int32 FEncryptionUtil::NormalizeByte(int32 InChar)
 	return InChar;
 }
 
-std::vector<uint8_t> FEncryptionUtil::GenerateRandomIV(size_t Size)
+std::vector<uint8_t> SQRLLEncryption::GenerateRandomIV(size_t Size)
 {
 	std::vector<uint8_t> RandomIV(Size);
 	std::random_device Rd;
 	std::mt19937 Gen(Rd());
 	std::uniform_int_distribution<> Dist(0, 255);
 
-	for (auto& Byte : RandomIV)
+	for (uint8_t& Byte : RandomIV)
 	{
 		Byte = static_cast<uint8_t>(Dist(Gen));
 	}

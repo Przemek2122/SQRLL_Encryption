@@ -7,6 +7,15 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <immintrin.h>
+
+#if defined(__x86_64__) || defined(_M_X64)
+#if defined(_MSC_VER)
+#include <intrin.h>
+#else
+#include <cpuid.h>
+#endif
+#endif
 
 /** Simple predefined XOR masks */
 class SQRLLPredefinedXORMasks
@@ -54,6 +63,16 @@ public:
 	static constexpr std::string_view BASE_EMAIL = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@._-+/*="; /** 0-9, a-z, A-Z, @._-+/*= */
 	static constexpr std::string_view BASE_SIMPLE_PASSWORD = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ !@#$%^&*()-_=+[]{}|/\\.,<>;:'?~\""; /** 0-9, a-z, A-Z, Special chars */
 };
+
+struct FCPUFeatures {
+	bool bHasAVX512F = false;
+	bool bHasAVX2 = false;
+	bool bHasSSE41 = false;
+
+	FCPUFeatures();
+};
+
+static const FCPUFeatures GCPUFeatures;
 
 class SQRLLXORCascade
 {
@@ -149,41 +168,24 @@ public:
 		explicit FEncryptionSettings(std::string InEncryptionWord = "SQRLL", int32_t InRandomIVSize = 64, int32_t InNumberOfOperations = 1);
 
 		std::string EncryptionWord;
-		int32_t RandomIVSize;
-		int32_t NumberOfOperations;
+		uint16_t RandomIVSize;
+		uint16_t NumberOfOperations;
 	};
 
-	/**
-	 * Encryption algorithm with verification
-	 * Use DecryptDataCustom for decryption.
-	 * For InEncryptionKey you can use GenerateSecureSalt function. (Preferably with size of 64-128 - More = more secure)
-	 *
-	 * Current tests:
-	 *
-		1. CORRECTNESS TEST
-		   ? PASS - All decryptions correct
+	/** Encrypt with allocation */
+	static std::string Encrypt(const std::string& InData, const std::string& InEncryptionKey, const FEncryptionSettings& EncryptionSettings = FEncryptionSettings());
 
-		2. AVALANCHE EFFECT TEST
-		   Bit change: 50.3%
-		   ? PASS - Good diffusion
+	/** Decrypt with allocation */
+	static std::string Decrypt(const std::string& InData, const std::string& InEncryptionKey, const FEncryptionSettings& EncryptionSettings = FEncryptionSettings());
 
-		3. ENTROPY TEST
-		   Entropy: 7.10 bits/byte
-		   ? PASS - Good randomness
+	/** Encrypt without allocation */
+	static void EncryptInPlace(uint8_t* __restrict BufferData, const size_t BufferSize, const uint8_t* __restrict KeyData, const size_t KeySize,
+	                           const FEncryptionSettings& Settings) noexcept;
 
-		4. PATTERN DETECTION TEST
-		   Unique outputs: 5/5
-		   ? PASS - No repeating patterns
+	/** Decrypt without allocation */
+	static void DecryptInPlace(uint8_t* __restrict BufferData, const size_t BufferSize, const uint8_t* __restrict KeyData, const size_t KeySize,
+	                           const FEncryptionSettings& Settings) noexcept;
 
-		5. PERFORMANCE TEST
-		   1000 encrypt/decrypt: 153ms
-		   ? FAST
-
-	 */
-	static std::string EncryptDataCustom(const std::string& InData, const std::string& InEncryptionKey, const FEncryptionSettings& EncryptionSettings = FEncryptionSettings());
-
-	/** Decryption algorithm with basic verification */
-	static std::string DecryptDataCustom(const std::string& InData, const std::string& InEncryptionKey, const FEncryptionSettings& EncryptionSettings = FEncryptionSettings());
 
 	static uint64_t ConvertCharsIntoInt(char InCharArray[8]);
 	static std::array<char, 8> ConvertIntIntoChars(uint64_t InData);
@@ -222,12 +224,19 @@ public:
 	static std::string ToBaseNNum(uintmax_t InNumber, std::string_view InCharSet);
 
 	/** Perform basic XOR encryption directly in the provided memory buffer */
-	static void BasicXORInPlace(uint8_t* __restrict Data, const size_t DataSize, const uint8_t* __restrict Key, const size_t KeySize);
+	static void BasicXORInPlace(uint8_t* __restrict Data, size_t DataSize, const uint8_t* __restrict Key, size_t KeySize) noexcept;
+	static void FlipDataInPlace(uint8_t* __restrict Data, size_t DataSize, const uint8_t* __restrict FlipKey, size_t KeySize) noexcept;
 
-	static void FlipDataInPlace(uint8_t* __restrict Data, const size_t DataSize, const uint8_t* __restrict FlipKey, const size_t KeySize) noexcept;
+	static void FusedForwardPass(uint8_t* __restrict Data, const size_t DataSize, const uint8_t* __restrict Key, size_t KeySize) noexcept;
+	static void FusedBackwardPass(uint8_t* __restrict Data, const size_t DataSize,  const uint8_t* __restrict Key, size_t KeySize) noexcept;
+
+	static void NonLinearDiffusionForward(uint8_t* __restrict Data,  size_t Size, const uint8_t* __restrict Key, size_t KeySize) noexcept;
+	static void NonLinearDiffusionBackward(uint8_t* __restrict Data, size_t Size, const uint8_t* __restrict Key, size_t KeySize) noexcept;
 
 	static std::vector<uint8_t> AddRandomBytes(const std::vector<uint8_t>& InputBytes, const std::string& InEncryptionKey);
 	static std::vector<uint8_t> RemoveRandomBytes(const std::vector<uint8_t>& InputBytes, const std::string& InEncryptionKey);
+
+	static void SIMDBlockReverse(uint8_t* __restrict Data, const size_t Size) noexcept;
 
 	static std::vector<uint8_t> StringToBytes(const std::string& Str);
 	static std::string BytesToString(const std::vector<uint8_t>& Bytes);

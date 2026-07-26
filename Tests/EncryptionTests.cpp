@@ -19,10 +19,10 @@ TEST(EncryptionTestCustom, Good)
 	const std::string SecureSalt = SQRLLEncryption::GenerateSecureSalt(32);
 
 	auto start = std::chrono::high_resolution_clock::now();
-	const std::string PassEncrypt = SQRLLEncryption::EncryptDataCustom(CorrectString, SecureSalt);
-	const std::string PassEncrypt2 = SQRLLEncryption::EncryptDataCustom(CorrectString, SecureSalt);
-	const std::string PassDecrypt = SQRLLEncryption::DecryptDataCustom(PassEncrypt, SecureSalt);
-	const std::string PassDecrypt2 = SQRLLEncryption::DecryptDataCustom(PassEncrypt2, SecureSalt);
+	const std::string PassEncrypt = SQRLLEncryption::Encrypt(CorrectString, SecureSalt);
+	const std::string PassEncrypt2 = SQRLLEncryption::Encrypt(CorrectString, SecureSalt);
+	const std::string PassDecrypt = SQRLLEncryption::Decrypt(PassEncrypt, SecureSalt);
+	const std::string PassDecrypt2 = SQRLLEncryption::Decrypt(PassEncrypt2, SecureSalt);
 	const bool bIsCryptographySuccessful = (CorrectString == PassDecrypt) && (PassDecrypt == PassDecrypt2);
 	auto end = std::chrono::high_resolution_clock::now();
 
@@ -39,8 +39,8 @@ TEST(EncryptionTestCustom, Bad)
 
 	const std::string SecureSalt = SQRLLEncryption::GenerateSecureSalt(32);
 
-	const std::string PassEncrypt = SQRLLEncryption::EncryptDataCustom(CorrectString, SecureSalt);
-	const std::string PassDecrypt = SQRLLEncryption::DecryptDataCustom(IncorrectString, SecureSalt);
+	const std::string PassEncrypt = SQRLLEncryption::Encrypt(CorrectString, SecureSalt);
+	const std::string PassDecrypt = SQRLLEncryption::Decrypt(IncorrectString, SecureSalt);
 	const bool bIsCryptographySuccessful = (CorrectString == PassDecrypt);
 
 	EXPECT_TRUE(bIsCryptographySuccessful == false);
@@ -62,8 +62,8 @@ TEST(EncryptionTestCustom, MassTest)
 
 	for (std::string& Input : Inputs)
 	{
-		const std::string PassEncrypt = SQRLLEncryption::EncryptDataCustom(Input, SecureSalt);;
-		const std::string PassDecrypt = SQRLLEncryption::DecryptDataCustom(PassEncrypt, SecureSalt);
+		const std::string PassEncrypt = SQRLLEncryption::Encrypt(Input, SecureSalt);;
+		const std::string PassDecrypt = SQRLLEncryption::Decrypt(PassEncrypt, SecureSalt);
 
 		EXPECT_TRUE(Input == PassDecrypt);
 
@@ -191,8 +191,8 @@ TEST(EncryptionSecurity, DecryptionCorrectness)
 
     int passed = 0;
     for (const auto& Input : testInputs) {
-        const std::string PassEncrypt = SQRLLEncryption::EncryptDataCustom(Input, SecureSalt);
-        const std::string PassDecrypt = SQRLLEncryption::DecryptDataCustom(PassEncrypt, SecureSalt);
+        const std::string PassEncrypt = SQRLLEncryption::Encrypt(Input, SecureSalt);
+        const std::string PassDecrypt = SQRLLEncryption::Decrypt(PassEncrypt, SecureSalt);
 
         if (Input == PassDecrypt) {
             std::cout << "✓ ";
@@ -234,7 +234,7 @@ TEST(EncryptionSecurity, PatternDetection)
     std::set<std::string> allEncrypted;
 
     for (const auto& Input : inputs) {
-        const std::string PassEncrypt = SQRLLEncryption::EncryptDataCustom(Input, SecureSalt);
+        const std::string PassEncrypt = SQRLLEncryption::Encrypt(Input, SecureSalt);
 
         allEncrypted.insert(PassEncrypt);
 
@@ -290,7 +290,7 @@ TEST(EncryptionSecurity, AvalancheEffect)
 
     std::string original = "MyT4STStringu";
 
-    const std::string encOriginal = SQRLLEncryption::EncryptDataCustom(original, SecureSalt);
+    const std::string encOriginal = SQRLLEncryption::Encrypt(original, SecureSalt);
 
     std::cout << "Original: \"" << original << "\"" << std::endl;
     std::cout << "Encrypted: " << ToReadable(encOriginal) << std::endl;
@@ -302,7 +302,7 @@ TEST(EncryptionSecurity, AvalancheEffect)
         std::string modified = original;
         modified[i] ^= 0x01; // Flip 1 bit
 
-        const std::string encModified = SQRLLEncryption::EncryptDataCustom(modified, SecureSalt);
+        const std::string encModified = SQRLLEncryption::Encrypt(modified, SecureSalt);
 
         int diffBytes = DifferentBytes(encOriginal, encModified);
         int diffBits = DifferentBits(encOriginal, encModified);
@@ -358,8 +358,8 @@ TEST(EncryptionSecurity, DeterministicEncryption)
 
     std::string Input = "MyT4STStringu";
 
-    const std::string enc1 = SQRLLEncryption::EncryptDataCustom(Input, SecureSalt);
-    const std::string enc2 = SQRLLEncryption::EncryptDataCustom(Input, SecureSalt);
+    const std::string enc1 = SQRLLEncryption::Encrypt(Input, SecureSalt);
+    const std::string enc2 = SQRLLEncryption::Encrypt(Input, SecureSalt);
 
     bool isDeterministic = (enc1 == enc2);
 
@@ -395,7 +395,7 @@ TEST(EncryptionSecurity, EntropyTest)
 
     for (const auto& test : tests)
     {
-        const std::string PassEncrypt = SQRLLEncryption::EncryptDataCustom(test.second, SecureSalt);
+        const std::string PassEncrypt = SQRLLEncryption::Encrypt(test.second, SecureSalt);
 
         double entropy = CalculateEntropy(PassEncrypt);
         int readable = ReadableChars(PassEncrypt);
@@ -445,7 +445,7 @@ TEST(EncryptionSecurity, KnownPlaintextResistance)
     std::vector<std::string> ciphertexts;
 
     for (const auto& plain : knownPlaintexts) {
-        const std::string PassEncrypt = SQRLLEncryption::EncryptDataCustom(plain, SecureSalt);
+        const std::string PassEncrypt = SQRLLEncryption::Encrypt(plain, SecureSalt);
         ciphertexts.push_back(PassEncrypt);
     }
 
@@ -496,7 +496,7 @@ TEST(EncryptionSecurity, FrequencyAnalysis)
 
     std::string plaintext = "EEEEEEEEEEEEE TTTTTTTTTT AAAAAAAAAA OOOOOOO";
 
-    const std::string PassEncrypt = SQRLLEncryption::EncryptDataCustom(plaintext, SecureSalt);
+    const std::string PassEncrypt = SQRLLEncryption::Encrypt(plaintext, SecureSalt);
 
     std::map<uint8_t, int> freq;
     for (unsigned char c : PassEncrypt) {
@@ -544,8 +544,8 @@ TEST(EncryptionSecurity, PerformanceTest)
     auto start = std::chrono::high_resolution_clock::now();
 
     for (int i = 0; i < 1000; i++) {
-        const std::string PassEncrypt = SQRLLEncryption::EncryptDataCustom(testData, SecureSalt);
-        const std::string PassDecrypt = SQRLLEncryption::DecryptDataCustom(PassEncrypt, SecureSalt);
+        const std::string PassEncrypt = SQRLLEncryption::Encrypt(testData, SecureSalt);
+        const std::string PassDecrypt = SQRLLEncryption::Decrypt(PassEncrypt, SecureSalt);
     }
 
     auto end = std::chrono::high_resolution_clock::now();
@@ -582,8 +582,8 @@ TEST(EncryptionSecurity, KeySensitivity)
     std::string SecureSaltB = SecureSaltA;
     SecureSaltB[0] ^= 0x01;
 
-    const std::string EncryptA = SQRLLEncryption::EncryptDataCustom(Input, SecureSaltA);
-    const std::string EncryptB = SQRLLEncryption::EncryptDataCustom(Input, SecureSaltB);
+    const std::string EncryptA = SQRLLEncryption::Encrypt(Input, SecureSaltA);
+    const std::string EncryptB = SQRLLEncryption::Encrypt(Input, SecureSaltB);
 
     int diffBits = DifferentBits(EncryptA, EncryptB);
 
@@ -618,7 +618,7 @@ TEST(EncryptionSecurity, CiphertextMalleability)
     const std::string SecureSalt = SQRLLEncryption::GenerateSecureSalt(32);
     const std::string OriginalInput = "Transfer $100 to user A";
 
-    std::string Ciphertext = SQRLLEncryption::EncryptDataCustom(OriginalInput, SecureSalt);
+    std::string Ciphertext = SQRLLEncryption::Encrypt(OriginalInput, SecureSalt);
 
     // Attacker intercepts the message and flips one bit in the middle
     if (!Ciphertext.empty()) {
@@ -626,7 +626,7 @@ TEST(EncryptionSecurity, CiphertextMalleability)
     }
 
     // Attempt to decrypt the tampered message
-    const std::string TamperedDecryption = SQRLLEncryption::DecryptDataCustom(Ciphertext, SecureSalt);
+    const std::string TamperedDecryption = SQRLLEncryption::Decrypt(Ciphertext, SecureSalt);
 
     int diffBits = DifferentBits(OriginalInput, TamperedDecryption);
 
@@ -660,7 +660,7 @@ TEST(EncryptionSecurity, ZeroBytePropagation)
     // Create a string of 1000 null bytes
     const std::string NullInput(1000, '\x00');
 
-    const std::string Ciphertext = SQRLLEncryption::EncryptDataCustom(NullInput, SecureSalt);
+    const std::string Ciphertext = SQRLLEncryption::Encrypt(NullInput, SecureSalt);
 
     double entropy = CalculateEntropy(Ciphertext);
 
@@ -697,8 +697,8 @@ TEST(EncryptionSecurity, LargePayloadScaling)
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    const std::string Encrypted = SQRLLEncryption::EncryptDataCustom(LargePayload, SecureSalt);
-    const std::string Decrypted = SQRLLEncryption::DecryptDataCustom(Encrypted, SecureSalt);
+    const std::string Encrypted = SQRLLEncryption::Encrypt(LargePayload, SecureSalt);
+    const std::string Decrypted = SQRLLEncryption::Decrypt(Encrypted, SecureSalt);
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
@@ -732,7 +732,7 @@ TEST(EncryptionSecurity, LengthLeakage)
 
     for (int i = 1; i <= 16; i++) {
         std::string plain(i, 'A');
-        const std::string encrypted = SQRLLEncryption::EncryptDataCustom(plain, SecureSalt);
+        const std::string encrypted = SQRLLEncryption::Encrypt(plain, SecureSalt);
         cipherLengths.push_back(encrypted.size());
 
         if (encrypted.size() == plain.size()) {
@@ -772,8 +772,8 @@ TEST(EncryptionSecurity, ExtremeKeySizes)
         const std::string& key = extremeKeys[i];
 
         try {
-            const std::string encrypted = SQRLLEncryption::EncryptDataCustom(Input, key);
-            const std::string decrypted = SQRLLEncryption::DecryptDataCustom(encrypted, key);
+            const std::string encrypted = SQRLLEncryption::Encrypt(Input, key);
+            const std::string decrypted = SQRLLEncryption::Decrypt(encrypted, key);
 
             if (decrypted == Input) {
                 std::cout << "[PASS] Handled key of size: " << key.size() << std::endl;
@@ -806,14 +806,14 @@ TEST(EncryptionSecurity, BinaryAndUTF8Safety)
 
     std::string UTF8Payload = "Zażółć gęślą jaźń";
 
-    const std::string EncBinary = SQRLLEncryption::EncryptDataCustom(BinaryPayload, SecureSalt);
-    const std::string DecBinary = SQRLLEncryption::DecryptDataCustom(EncBinary, SecureSalt);
+    const std::string EncBinary = SQRLLEncryption::Encrypt(BinaryPayload, SecureSalt);
+    const std::string DecBinary = SQRLLEncryption::Decrypt(EncBinary, SecureSalt);
 
     bool bBinarySafe = (BinaryPayload == DecBinary) && (DecBinary.length() == 21);
     std::cout << (bBinarySafe ? "[PASS]" : "[FAIL]") << " Null-byte (\\x00) internal safety" << std::endl;
 
-    const std::string EncUTF8 = SQRLLEncryption::EncryptDataCustom(UTF8Payload, SecureSalt);
-    const std::string DecUTF8 = SQRLLEncryption::DecryptDataCustom(EncUTF8, SecureSalt);
+    const std::string EncUTF8 = SQRLLEncryption::Encrypt(UTF8Payload, SecureSalt);
+    const std::string DecUTF8 = SQRLLEncryption::Decrypt(EncUTF8, SecureSalt);
 
     bool bUTF8Safe = (UTF8Payload == DecUTF8);
     std::cout << (bUTF8Safe ? "[PASS]" : "[FAIL]") << " UTF-8 Multi-byte safety" << std::endl;
@@ -842,7 +842,7 @@ TEST(EncryptionSecurity, CorruptedCiphertextRobustness)
     bool bDidCrash = false;
 
     try {
-        const std::string Output = SQRLLEncryption::DecryptDataCustom(RandomGarbage, SecureSalt);
+        const std::string Output = SQRLLEncryption::Decrypt(RandomGarbage, SecureSalt);
         std::cout << "[PASS] Algorithm survived completely random garbage without segfaulting." << std::endl;
     } catch (const std::exception& e) {
         bDidCrash = true;
@@ -854,39 +854,34 @@ TEST(EncryptionSecurity, CorruptedCiphertextRobustness)
 
     EXPECT_FALSE(bDidCrash) << "Algorithm is vulnerable to denial of service via corrupted ciphertext.";
 }
+
 // ============================================================================
 // TEST 17: Length Analysis (Before & After)
 // ============================================================================
 // Verifies that the final length of the encrypted buffer mathematically matches
-// the formula: Original Size + Header (Word + IV) + Noise Bytes.
-// Prevents silent memory padding leaks.
+// the exact formula: Plaintext Size + Header (Word + IV).
 TEST(EncryptionSecurity, LengthBeforeAndAfter)
 {
     std::cout << "\n=== 17. LENGTH BEFORE AND AFTER TEST ===" << std::endl;
 
     SQRLLEncryption::FEncryptionSettings Settings("SQRLL_MAGIC", 12, 1);
-    const std::string Key = "UltraSecureHFTKey1234567"; // 24 bytes
-    const std::string Plaintext = "Test message for system with variable length.";
+    const std::string Key = "UltraSecureKey123456789012"; // 26 bytes
+    const std::string Plaintext = "Test message for encryption system with exact size.";
 
-    const std::string Encrypted = SQRLLEncryption::EncryptDataCustom(Plaintext, Key, Settings);
+    const std::string Encrypted = SQRLLEncryption::Encrypt(Plaintext, Key, Settings);
 
-    // Mathematical calculations of expected payload size
+    // Exact mathematical expectations for the zero-allocation single-pass pipeline
     const size_t WordSize = Settings.EncryptionWord.size(); // 11
-    const size_t IVSize = Settings.RandomIVSize + Key.size(); // 12 + 24 = 36
-    const size_t BasePayloadSize = WordSize + IVSize + Plaintext.size();
-
-    // Noise logic uses: Step = max(abs(Key[0] % 5), 2)
-    const int32_t Step = std::max(std::abs(Key[0] % 5), 2);
-    const size_t ExpectedNoiseCount = BasePayloadSize / Step;
-    const size_t ExpectedEncryptedSize = BasePayloadSize + ExpectedNoiseCount;
+    const size_t IVSize = Settings.RandomIVSize + Key.size(); // 12 + 26 = 38
+    const size_t HeaderSize = WordSize + IVSize;
+    const size_t ExpectedEncryptedSize = Plaintext.size() + HeaderSize;
 
     std::cout << "[INFO] Plaintext Length : " << Plaintext.size() << " bytes" << std::endl;
-    std::cout << "[INFO] Base Payload Size: " << BasePayloadSize << " bytes (with Headers)" << std::endl;
-    std::cout << "[INFO] Expected Noise   : " << ExpectedNoiseCount << " bytes (Step: " << Step << ")" << std::endl;
+    std::cout << "[INFO] Header Size      : " << HeaderSize << " bytes (Word: " << WordSize << " B + IV: " << IVSize << " B)" << std::endl;
     std::cout << "[INFO] Expected Output  : " << ExpectedEncryptedSize << " bytes" << std::endl;
     std::cout << "[INFO] Actual Output    : " << Encrypted.size() << " bytes" << std::endl;
 
-    const std::string Decrypted = SQRLLEncryption::DecryptDataCustom(Encrypted, Key, Settings);
+    const std::string Decrypted = SQRLLEncryption::Decrypt(Encrypted, Key, Settings);
 
     EXPECT_EQ(Encrypted.size(), ExpectedEncryptedSize) << "[FAIL] Encrypted length formula mismatch!";
     EXPECT_EQ(Decrypted.size(), Plaintext.size()) << "[FAIL] Decrypted length formula mismatch!";
@@ -924,8 +919,8 @@ TEST(EncryptionSecurity, EdgeCasesAdvanced)
     for (const auto& Case : Cases)
     {
         try {
-            const std::string Encrypted = SQRLLEncryption::EncryptDataCustom(Case.Payload, Case.Key, Settings);
-            const std::string Decrypted = SQRLLEncryption::DecryptDataCustom(Encrypted, Case.Key, Settings);
+            const std::string Encrypted = SQRLLEncryption::Encrypt(Case.Payload, Case.Key, Settings);
+            const std::string Decrypted = SQRLLEncryption::Decrypt(Encrypted, Case.Key, Settings);
 
             if (Decrypted == Case.Payload) {
                 std::cout << "[PASS] " << Case.Name << std::endl;
@@ -974,7 +969,7 @@ TEST(EncryptionSecurity, OverheadAnalysis)
     for (size_t Size : TestSizes)
     {
         std::string Plaintext(Size, 'A');
-        const std::string Encrypted = SQRLLEncryption::EncryptDataCustom(Plaintext, Key, Settings);
+        const std::string Encrypted = SQRLLEncryption::Encrypt(Plaintext, Key, Settings);
 
         size_t DiffBytes = Encrypted.size() - Plaintext.size();
         double OverheadPercent = (static_cast<double>(DiffBytes) / Plaintext.size()) * 100.0;
@@ -996,82 +991,132 @@ TEST(EncryptionSecurity, OverheadAnalysis)
 }
 
 // ============================================================================
-// Algorithm Performance Comparison & Reference Benchmark
+// Multi-Size Iterative Performance Benchmark (30 RUNS - ZERO ALLOCATION)
 // ============================================================================
-// Compares SQRLL against raw memory copy, AES-256-CTR, and ChaCha20.
-TEST(EncryptionSecurity, AlgorithmPerformanceComparison)
+TEST(EncryptionSecurity, AlgorithmPerformanceComparisonMultiSize)
 {
-    std::cout << "\n=== ALGORITHM PERFORMANCE COMPARISON ===" << std::endl;
+    std::cout << "\n============================================================" << std::endl;
+    std::cout << "     BENCHMARK: MULTI-SIZE FAIR PERFORMANCE (30 RUNS)       " << std::endl;
+    std::cout << "============================================================" << std::endl;
 
-    const size_t PayloadSize = 1024 * 1024; // 1 Megabyte
-    std::string LargePayload(PayloadSize, 'X');
+    const std::vector<size_t> PayloadSizes = { 256 * 1024, 512 * 1024, 1024 * 1024 }; // 256KB, 512KB, 1MB
+    const int Iterations = 30;
     const std::string Key = "AVX2_SIMD_OptimizedKey32ByteTEST"; // 32 bytes
+    const uint8_t* KeyPtr = reinterpret_cast<const uint8_t*>(Key.data());
     SQRLLEncryption::FEncryptionSettings Settings("PERF", 4, 1);
 
-    // 1. std::memcpy (Hardware baseline)
-    std::string MemcpyBuffer(PayloadSize, '\0');
-    auto startMemcpy = std::chrono::high_resolution_clock::now();
-    std::memcpy(MemcpyBuffer.data(), LargePayload.data(), PayloadSize);
-    auto endMemcpy = std::chrono::high_resolution_clock::now();
-    double memcpyTime = std::chrono::duration<double, std::milli>(endMemcpy - startMemcpy).count();
+    for (size_t PayloadSize : PayloadSizes)
+    {
+        std::string LargePayload(PayloadSize, 'X');
 
-    // 2. MbedTLS: AES-256-CTR
-    std::string AesBuffer = LargePayload;
-    unsigned char AesNonce[16] = {0}; // Dummy nonce
-    unsigned char AesStreamBlock[16] = {0};
-    size_t AesNcOff = 0;
-    mbedtls_aes_context AesCtx;
-    mbedtls_aes_init(&AesCtx);
-    mbedtls_aes_setkey_enc(&AesCtx, reinterpret_cast<const unsigned char*>(Key.data()), 256);
+        // Bufery przygotowane ZGÓRY dla WSZYSTKICH testów (Zero-Allocation w pętli)
+        std::string MemcpyBuffer(PayloadSize, '\0');
 
-    auto startAes = std::chrono::high_resolution_clock::now();
-    mbedtls_aes_crypt_ctr(&AesCtx, PayloadSize, &AesNcOff, AesNonce, AesStreamBlock,
-                          reinterpret_cast<const unsigned char*>(LargePayload.data()),
-                          reinterpret_cast<unsigned char*>(AesBuffer.data()));
-    auto endAes = std::chrono::high_resolution_clock::now();
-    double aesTime = std::chrono::duration<double, std::milli>(endAes - startAes).count();
-    mbedtls_aes_free(&AesCtx);
+        std::string AesCiphertext(PayloadSize, '\0');
+        std::string AesDecrypted(PayloadSize, '\0');
 
-    // 3. MbedTLS: ChaCha20
-    std::string ChaChaBuffer = LargePayload;
-    unsigned char ChaChaNonce[12] = {0};
-    mbedtls_chacha20_context ChaChaCtx;
-    mbedtls_chacha20_init(&ChaChaCtx);
-    mbedtls_chacha20_setkey(&ChaChaCtx, reinterpret_cast<const unsigned char*>(Key.data()));
-    mbedtls_chacha20_starts(&ChaChaCtx, ChaChaNonce, 0);
+        std::string ChaChaCiphertext(PayloadSize, '\0');
+        std::string ChaChaDecrypted(PayloadSize, '\0');
 
-    auto startChaCha = std::chrono::high_resolution_clock::now();
-    mbedtls_chacha20_update(&ChaChaCtx, PayloadSize,
-                            reinterpret_cast<const unsigned char*>(LargePayload.data()),
-                            reinterpret_cast<unsigned char*>(ChaChaBuffer.data()));
-    auto endChaCha = std::chrono::high_resolution_clock::now();
-    double chachaTime = std::chrono::duration<double, std::milli>(endChaCha - startChaCha).count();
-    mbedtls_chacha20_free(&ChaChaCtx);
+        std::vector<uint8_t> SQRLLWorkBuffer(LargePayload.begin(), LargePayload.end());
 
-    // 4. SQRLL Custom Encryption
-    auto startSQRLL = std::chrono::high_resolution_clock::now();
-    const std::string Encrypted = SQRLLEncryption::EncryptDataCustom(LargePayload, Key, Settings);
-    auto endSQRLL = std::chrono::high_resolution_clock::now();
-    double sqrllTime = std::chrono::duration<double, std::milli>(endSQRLL - startSQRLL).count();
+        double TotalMemcpy = 0.0;
+        double TotalAes = 0.0;
+        double TotalChaCha = 0.0;
+        double TotalSQRLL = 0.0;
 
-    std::cout << "[INFO] Payload Size               : 1 MB" << std::endl;
-    std::cout << "------------------------------------------------------------" << std::endl;
-    std::cout << "[BASE] std::memcpy (Hardware Max) : " << std::fixed << std::setprecision(3) << memcpyTime << " ms" << std::endl;
-    std::cout << "[REF]  MbedTLS AES-256-CTR        : " << aesTime << " ms" << std::endl;
-    std::cout << "[REF]  MbedTLS ChaCha20           : " << chachaTime << " ms" << std::endl;
-    std::cout << "------------------------------------------------------------" << std::endl;
-    std::cout << "[TEST] SQRLL Full Cipher          : " << sqrllTime << " ms" << std::endl;
+        for (int iter = 0; iter < Iterations; ++iter)
+        {
+            // ----------------------------------------------------------------
+            // 1. std::memcpy (Hardware Limit)
+            // ----------------------------------------------------------------
+            auto startMemcpy = std::chrono::high_resolution_clock::now();
+            std::memcpy(MemcpyBuffer.data(), LargePayload.data(), PayloadSize);
+            auto endMemcpy = std::chrono::high_resolution_clock::now();
+            TotalMemcpy += std::chrono::duration<double, std::milli>(endMemcpy - startMemcpy).count();
+
+            // ----------------------------------------------------------------
+            // 2. MbedTLS: AES-256-CTR
+            // ----------------------------------------------------------------
+            unsigned char AesNonce[16] = {0};
+            unsigned char AesStreamBlock[16] = {0};
+            size_t AesNcOff = 0;
+
+            mbedtls_aes_context AesCtx;
+            mbedtls_aes_init(&AesCtx);
+            mbedtls_aes_setkey_enc(&AesCtx, KeyPtr, 256);
+
+            auto startAes = std::chrono::high_resolution_clock::now();
+            mbedtls_aes_crypt_ctr(&AesCtx, PayloadSize, &AesNcOff, AesNonce, AesStreamBlock,
+                                  reinterpret_cast<const unsigned char*>(LargePayload.data()),
+                                  reinterpret_cast<unsigned char*>(AesCiphertext.data()));
+            AesNcOff = 0;
+            std::memset(AesNonce, 0, 16);
+            mbedtls_aes_crypt_ctr(&AesCtx, PayloadSize, &AesNcOff, AesNonce, AesStreamBlock,
+                                  reinterpret_cast<const unsigned char*>(AesCiphertext.data()),
+                                  reinterpret_cast<unsigned char*>(AesDecrypted.data()));
+            auto endAes = std::chrono::high_resolution_clock::now();
+            TotalAes += std::chrono::duration<double, std::milli>(endAes - startAes).count();
+            mbedtls_aes_free(&AesCtx);
+
+            // ----------------------------------------------------------------
+            // 3. MbedTLS: ChaCha20
+            // ----------------------------------------------------------------
+            unsigned char ChaChaNonce[12] = {0};
+
+            mbedtls_chacha20_context ChaChaCtx;
+            mbedtls_chacha20_init(&ChaChaCtx);
+            mbedtls_chacha20_setkey(&ChaChaCtx, KeyPtr);
+
+            auto startChaCha = std::chrono::high_resolution_clock::now();
+            mbedtls_chacha20_starts(&ChaChaCtx, ChaChaNonce, 0);
+            mbedtls_chacha20_update(&ChaChaCtx, PayloadSize,
+                                    reinterpret_cast<const unsigned char*>(LargePayload.data()),
+                                    reinterpret_cast<unsigned char*>(ChaChaCiphertext.data()));
+            mbedtls_chacha20_starts(&ChaChaCtx, ChaChaNonce, 0);
+            mbedtls_chacha20_update(&ChaChaCtx, PayloadSize,
+                                    reinterpret_cast<const unsigned char*>(ChaChaCiphertext.data()),
+                                    reinterpret_cast<unsigned char*>(ChaChaDecrypted.data()));
+            auto endChaCha = std::chrono::high_resolution_clock::now();
+            TotalChaCha += std::chrono::duration<double, std::milli>(endChaCha - startChaCha).count();
+            mbedtls_chacha20_free(&ChaChaCtx);
+
+            // ----------------------------------------------------------------
+            // 4. SQRLL In-Place Core (Fair Benchmark)
+            // ----------------------------------------------------------------
+            // Przywróć dane źródłowe bez mierzenia czasu przygotowania
+            std::memcpy(SQRLLWorkBuffer.data(), LargePayload.data(), PayloadSize);
+
+            auto startSQRLL = std::chrono::high_resolution_clock::now();
+            SQRLLEncryption::EncryptInPlace(SQRLLWorkBuffer.data(), PayloadSize, KeyPtr, Key.size(), Settings);
+            SQRLLEncryption::DecryptInPlace(SQRLLWorkBuffer.data(), PayloadSize, KeyPtr, Key.size(), Settings);
+            auto endSQRLL = std::chrono::high_resolution_clock::now();
+            TotalSQRLL += std::chrono::duration<double, std::milli>(endSQRLL - startSQRLL).count();
+        }
+
+        // Calculate averages
+        const double AvgMemcpy = TotalMemcpy / Iterations;
+        const double AvgAes    = TotalAes / Iterations;
+        const double AvgChaCha = TotalChaCha / Iterations;
+        const double AvgSQRLL  = TotalSQRLL / Iterations;
+
+        const std::string SizeLabel = (PayloadSize >= 1024 * 1024)
+                                    ? std::to_string(PayloadSize / (1024 * 1024)) + " MB"
+                                    : std::to_string(PayloadSize / 1024) + " KB";
+
+        std::cout << "\n[INFO] Payload Size                   : " << SizeLabel << " (Avg over " << Iterations << " runs)" << std::endl;
+        std::cout << "------------------------------------------------------------" << std::endl;
+        std::cout << "[BASE] std::memcpy (Hardware Limit)   : " << std::fixed << std::setprecision(3) << AvgMemcpy << " ms" << std::endl;
+        std::cout << "[REF]  MbedTLS AES-256-CTR (AES-NI)   : " << AvgAes << " ms" << std::endl;
+        std::cout << "[REF]  MbedTLS ChaCha20 (SIMD)        : " << AvgChaCha << " ms" << std::endl;
+        std::cout << "------------------------------------------------------------" << std::endl;
+        std::cout << "[TEST] SQRLL Full Cipher (In-Place)   : " << AvgSQRLL << " ms" << std::endl;
 
 #ifdef NDEBUG
-    if (sqrllTime < 50.0) {
-        std::cout << "[PASS] SQRLL operates within acceptable production limits." << std::endl;
-    } else {
-        std::cout << "[WARN] SQRLL is slower than standard ciphers. Expected <50ms." << std::endl;
-    }
-    EXPECT_LT(sqrllTime, 100.0) << "SQRLL Encryption is too slow for production payloads.";
-#else
-    std::cout << "[WARN] Running in DEBUG mode. Performance is degraded." << std::endl;
+        EXPECT_LT(AvgSQRLL, 50.0) << "SQRLL average speed exceeded limits on payload size: " << SizeLabel;
 #endif
+    }
+    std::cout << "============================================================\n" << std::endl;
 }
 
 // ============================================================================
@@ -1099,31 +1144,31 @@ TEST(EncryptionSecurity, FinalSecurityReport)
 
     // 1. Correctness
     const std::string testStr = "MyT4STStringu";
-    const std::string encStr = SQRLLEncryption::EncryptDataCustom(testStr, SecureSalt, Settings);
-    const std::string decStr = SQRLLEncryption::DecryptDataCustom(encStr, SecureSalt, Settings);
+    const std::string encStr = SQRLLEncryption::Encrypt(testStr, SecureSalt, Settings);
+    const std::string decStr = SQRLLEncryption::Decrypt(encStr, SecureSalt, Settings);
     printResult("Core Reversibility", (testStr == decStr), "Decryption matches original");
 
     // 2. Memory Bounds
     bool passEdgeCases = true;
-    try { SQRLLEncryption::EncryptDataCustom(testStr, "", Settings); }
+    try { SQRLLEncryption::Encrypt(testStr, "", Settings); }
     catch (...) { passEdgeCases = false; }
     printResult("Architecture Integrity", passEdgeCases, "Empty/Invalid keys handled safely");
 
     // 3. Binary Safety
     std::string binStr = "A\x00B";
-    const std::string decBin = SQRLLEncryption::DecryptDataCustom(SQRLLEncryption::EncryptDataCustom(binStr, SecureSalt, Settings), SecureSalt, Settings);
+    const std::string decBin = SQRLLEncryption::Decrypt(SQRLLEncryption::Encrypt(binStr, SecureSalt, Settings), SecureSalt, Settings);
     printResult("Binary Data Safety", (binStr == decBin), "Null bytes (\\x00) preserved");
 
-    // 4. Length Determinism & Overhead
-    const int32_t step = std::max(std::abs(SecureSalt[0] % 5), 2);
-    const size_t baseSize = Settings.EncryptionWord.size() + Settings.RandomIVSize + SecureSalt.size() + testStr.size();
-    const size_t expectedSize = baseSize + (baseSize / step);
+    // 4. Dynamic Length Determinism (Word + RandomIV + KeyLength + Plaintext)
+    const size_t wordSize = Settings.EncryptionWord.size();
+    const size_t ivSize = Settings.RandomIVSize + SecureSalt.size();
+    const size_t expectedSize = testStr.size() + wordSize + ivSize;
     printResult("Length Determinism", (encStr.size() == expectedSize), "Payload growth is mathematically exact");
 
-    // 5. Benchmark Speed
+    // 5. Build-Aware Scalability Check (1MB)
     std::string largeStr(1024 * 1024, 'A');
     auto startBench = std::chrono::high_resolution_clock::now();
-    SQRLLEncryption::EncryptDataCustom(largeStr, SecureSalt, Settings);
+    SQRLLEncryption::Encrypt(largeStr, SecureSalt, Settings);
     auto endBench = std::chrono::high_resolution_clock::now();
     double timeBench = std::chrono::duration<double, std::milli>(endBench - startBench).count();
 
@@ -1131,7 +1176,7 @@ TEST(EncryptionSecurity, FinalSecurityReport)
     std::string formattedTime = timeStr.substr(0, timeStr.find('.') + 3) + " ms";
 
 #ifdef NDEBUG
-    printResult("Speed Check (Release)", (timeBench < 50.0), "1MB Encrypted in " + formattedTime);
+    printResult("Speed Check (Release)", (timeBench < 30.0), "1MB Encrypted in " + formattedTime);
 #else
     printResult("Speed Check (Debug)", (timeBench < 500.0), "1MB Encrypted in " + formattedTime);
 #endif

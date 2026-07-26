@@ -11,6 +11,35 @@
 #include <iostream>
 #include <ranges>
 #include <unordered_map>
+#include <immintrin.h>
+
+FCPUFeatures::FCPUFeatures()
+{
+#if defined(__x86_64__) || defined(_M_X64)
+	int info[4];
+	#if defined(_MSC_VER)
+		__cpuid(info, 0);
+		int nIds = info[0];
+		if (nIds >= 1) {
+			__cpuidex(info, 1, 0);
+			bHasSSE41 = (info[2] & (1 << 19)) != 0;
+		}
+		if (nIds >= 7) {
+			__cpuidex(info, 7, 0);
+			bHasAVX2 = (info[1] & (1 << 5)) != 0;
+			bHasAVX512F = (info[1] & (1 << 16)) != 0;
+		}
+	#else
+		if (__get_cpuid(1, (unsigned int*)&info[0], (unsigned int*)&info[1], (unsigned int*)&info[2], (unsigned int*)&info[3])) {
+			bHasSSE41 = (info[2] & (1 << 19)) != 0;
+		}
+		if (__get_cpuid_count(7, 0, (unsigned int*)&info[0], (unsigned int*)&info[1], (unsigned int*)&info[2], (unsigned int*)&info[3])) {
+			bHasAVX2 = (info[1] & (1 << 5)) != 0;
+			bHasAVX512F = (info[1] & (1 << 16)) != 0;
+		}
+	#endif
+#endif
+}
 
 void SQRLLXORCascade::CascadeForward(uint8_t* __restrict Data, const size_t Size) noexcept
 {
@@ -176,37 +205,6 @@ std::vector<uint8_t> SQRLLBitFlipping::FlipData(const std::vector<uint8_t>& InFl
 	return OutData;
 }
 
-void SQRLLBitFlipping::FlipDataInPlace(uint8_t* Data, const size_t DataSize, const uint8_t* FlipKey,
-	const size_t KeySize) noexcept
-{
-	if (DataSize < 8 || KeySize == 0) return;
-
-	std::vector<uint64_t> Masks = SQRLLPredefinedXORMasks::GetEightMasks();
-	const size_t ChunkCount = DataSize / 8;
-
-	// Cast pointer to process 8 bytes simultaneously
-	uint64_t* __restrict Data64 = reinterpret_cast<uint64_t*>(Data);
-
-	size_t KeyIdx = 0;
-
-	// Process full 8-byte blocks
-	for (size_t i = 0; i < ChunkCount; ++i)
-	{
-		// Safe mask extraction using bitwise AND instead of modulo
-		Data64[i] ^= Masks[FlipKey[KeyIdx] & 7];
-
-		if (++KeyIdx == KeySize) KeyIdx = 0;
-	}
-
-	// Process remaining tail bytes (1 to 7 bytes)
-	const size_t TailStart = ChunkCount * 8;
-	for (size_t i = TailStart; i < DataSize; ++i)
-	{
-		Data[i] ^= static_cast<uint8_t>(Masks[FlipKey[KeyIdx] & 7] & 0xFF);
-		if (++KeyIdx == KeySize) KeyIdx = 0;
-	}
-}
-
 uint64_t SQRLLShuffle::BoundedRandom(std::mt19937_64& Rng, uint64_t Bound)
 {
 	uint64_t X = Rng();
@@ -357,134 +355,100 @@ SQRLLEncryption::FEncryptionSettings::FEncryptionSettings(std::string InEncrypti
 {
 }
 
-std::string SQRLLEncryption::EncryptDataCustom(const std::string& InData, const std::string& InEncryptionKey, const FEncryptionSettings& EncryptionSettings)
+void SQRLLEncryption::EncryptInPlace(uint8_t* BufferData, const size_t BufferSize, const uint8_t* KeyData,
+	const size_t KeySize, const FEncryptionSettings& Settings) noexcept
 {
-    // Fast path: skip encryption if key is too short
-    if (InEncryptionKey.size() <= 16)
-    {
-       return InData;
-    }
+	if (!BufferData || BufferSize == 0 || !KeyData || KeySize <= 16) return;
 
-    const size_t KeySize = InEncryptionKey.size();
-    const int32_t NumberOfIV = EncryptionSettings.RandomIVSize + static_cast<int32_t>(KeySize);
-    const std::vector<uint8_t> KeyIV = GenerateRandomIV(NumberOfIV);
+	SIMDBlockReverse(BufferData, BufferSize);
 
-    // Preallocate exact memory to prevent any reallocations
-    std::vector<uint8_t> InputBytes;
-    const size_t BasePayloadSize = EncryptionSettings.EncryptionWord.size() + KeyIV.size() + InData.size();
-    const int32_t Step = std::max(std::abs(InEncryptionKey[0] % 5), 2);
+	for (int32_t i = 0; i < Settings.NumberOfOperations; ++i)
+	{
+		FusedForwardPass(BufferData, BufferSize, KeyData, KeySize);
+		SQRLLXORCascade::CascadeForward(BufferData, BufferSize);
+		SIMDBlockReverse(BufferData, BufferSize);
+	}
 
-    // Reserve enough memory for the payload + random noise + 1 safe byte
-    InputBytes.reserve(BasePayloadSize + (BasePayloadSize / Step) + 1);
-
-    // Construct payload directly in the vector (Zero string concatenations)
-    InputBytes.insert(InputBytes.end(), EncryptionSettings.EncryptionWord.begin(), EncryptionSettings.EncryptionWord.end());
-    InputBytes.insert(InputBytes.end(), KeyIV.begin(), KeyIV.end());
-    InputBytes.insert(InputBytes.end(), InData.begin(), InData.end());
-
-    const std::vector<uint8_t> EncryptionKeyBytes(InEncryptionKey.begin(), InEncryptionKey.end());
-
-    // 1. Reverse
-    std::ranges::reverse(InputBytes.begin(), InputBytes.end());
-
-    // 2. Add random bytes
-    InputBytes = AddRandomBytes(InputBytes, InEncryptionKey);
-
-    // 3. Shuffle
-    SQRLLShuffle::Forward(InputBytes, EncryptionKeyBytes);
-
-    // =====================================================================
-    // HFT HOT PATH: Zero-Allocation Block
-    // =====================================================================
-    uint8_t* __restrict BufferData = InputBytes.data();
-    const size_t BufferSize = InputBytes.size();
-    const uint8_t* __restrict KeyData = EncryptionKeyBytes.data();
-
-    // XOR Operations Loop
-    for (int32_t i = 0; i < EncryptionSettings.NumberOfOperations; i++)
-    {
-       BasicXORInPlace(BufferData, BufferSize, KeyData, KeySize);
-       SQRLLBitFlipping::FlipDataInPlace(BufferData, BufferSize, KeyData, KeySize);
-       SQRLLXORCascade::CascadeForward(BufferData, BufferSize);
-       std::reverse(BufferData, BufferData + BufferSize);
-    }
-
-    // Final Base Encryption
-    BasicXORInPlace(BufferData, BufferSize, KeyData, KeySize);
-    // =====================================================================
-
-    return std::string(InputBytes.begin(), InputBytes.end());
+	BasicXORInPlace(BufferData, BufferSize, KeyData, KeySize);
 }
 
-std::string SQRLLEncryption::DecryptDataCustom(const std::string& InData, const std::string& InEncryptionKey, const FEncryptionSettings& EncryptionSettings)
+void SQRLLEncryption::DecryptInPlace(uint8_t* BufferData, const size_t BufferSize, const uint8_t* KeyData,
+	const size_t KeySize, const FEncryptionSettings& Settings) noexcept
 {
-    if (InEncryptionKey.size() <= 16)
-    {
-       return InData;
-    }
+	if (!BufferData || BufferSize == 0 || !KeyData || KeySize <= 16) return;
 
-    std::vector<uint8_t> InputBytes(InData.begin(), InData.end());
-    const std::vector<uint8_t> EncryptionKeyBytes(InEncryptionKey.begin(), InEncryptionKey.end());
-    const size_t KeySize = EncryptionKeyBytes.size();
+	BasicXORInPlace(BufferData, BufferSize, KeyData, KeySize);
 
-    // =====================================================================
-    // HFT HOT PATH: Zero-Allocation Block
-    // =====================================================================
-    uint8_t* __restrict BufferData = InputBytes.data();
-    const size_t BufferSize = InputBytes.size();
-    const uint8_t* __restrict KeyData = EncryptionKeyBytes.data();
+	for (int32_t i = 0; i < Settings.NumberOfOperations; ++i)
+	{
+		SIMDBlockReverse(BufferData, BufferSize);
+		SQRLLXORCascade::CascadeBackward(BufferData, BufferSize);
+		FusedBackwardPass(BufferData, BufferSize, KeyData, KeySize);
+	}
 
-    // Reverse of the Final Base Encryption
-    BasicXORInPlace(BufferData, BufferSize, KeyData, KeySize);
+	SIMDBlockReverse(BufferData, BufferSize);
+}
 
-    // Cascade XOR backward
-    for (int32_t i = 0; i < EncryptionSettings.NumberOfOperations; i++)
-    {
-       std::reverse(BufferData, BufferData + BufferSize);
-       SQRLLXORCascade::CascadeBackward(BufferData, BufferSize);
-       SQRLLBitFlipping::FlipDataInPlace(BufferData, BufferSize, KeyData, KeySize);
-       BasicXORInPlace(BufferData, BufferSize, KeyData, KeySize);
-    }
-    // =====================================================================
+std::string SQRLLEncryption::Encrypt(const std::string& InData, const std::string& InEncryptionKey,
+	const FEncryptionSettings& EncryptionSettings)
+{
+	if (InEncryptionKey.size() <= 16) return InData;
 
-    // 3. Undo shuffle
-    SQRLLShuffle::Backward(InputBytes, EncryptionKeyBytes);
+	const size_t KeySize = InEncryptionKey.size();
+	const int32_t NumberOfIV = EncryptionSettings.RandomIVSize + static_cast<int32_t>(KeySize);
+	const std::vector<uint8_t> KeyIV = GenerateRandomIV(NumberOfIV);
 
-    // 2. Remove random bytes
-    InputBytes = RemoveRandomBytes(InputBytes, InEncryptionKey);
+	const size_t WordSize = EncryptionSettings.EncryptionWord.size();
+	const size_t BasePayloadSize = WordSize + KeyIV.size() + InData.size();
 
-    // 1. Undo reverse
-    std::ranges::reverse(InputBytes.begin(), InputBytes.end());
+	// 1. Single Memory Allocation
+	std::string OutputBuffer;
+	OutputBuffer.resize(BasePayloadSize);
 
-    // 0. Check and remove EncryptionWord and IV without mutating memory (No erase calls)
-    const size_t WordSize = EncryptionSettings.EncryptionWord.size();
-    const int32_t NumberOfIV = EncryptionSettings.RandomIVSize + static_cast<int32_t>(KeySize);
-    const size_t TotalHeaderSize = WordSize + NumberOfIV;
+	uint8_t* OutPtr = reinterpret_cast<uint8_t*>(OutputBuffer.data());
 
-    // Check if buffer is even large enough to contain headers
-    if (InputBytes.size() < TotalHeaderSize)
-    {
-       return "";
-    }
+	// 2. Build Header + Payload directly into final memory location
+	std::memcpy(OutPtr, EncryptionSettings.EncryptionWord.data(), WordSize);
+	std::memcpy(OutPtr + WordSize, KeyIV.data(), KeyIV.size());
+	std::memcpy(OutPtr + WordSize + KeyIV.size(), InData.data(), InData.size());
 
-    // Verify EncryptionWord without creating substrings
-    bool bIsWordValid = true;
-    for (size_t i = 0; i < WordSize; ++i)
-    {
-       if (InputBytes[i] != static_cast<uint8_t>(EncryptionSettings.EncryptionWord[i]))
-       {
-          bIsWordValid = false;
-          break;
-       }
-    }
+	// 3. Delegation to Zero-Allocation Core
+	EncryptInPlace(OutPtr, BasePayloadSize,
+	               reinterpret_cast<const uint8_t*>(InEncryptionKey.data()), KeySize,
+	               EncryptionSettings);
 
-    if (!bIsWordValid)
-    {
-       return "";
-    }
+	return OutputBuffer;
+}
 
-    // Skip the header directly during string construction (O(N) instead of O(N^2))
-    return std::string(InputBytes.begin() + TotalHeaderSize, InputBytes.end());
+std::string SQRLLEncryption::Decrypt(const std::string& InData, const std::string& InEncryptionKey,
+	const FEncryptionSettings& EncryptionSettings)
+{
+	if (InEncryptionKey.size() <= 16 || InData.empty()) return InData;
+
+	// 1. Create mutable working copy
+	std::string WorkingBuffer = InData;
+	uint8_t* BufferData = reinterpret_cast<uint8_t*>(WorkingBuffer.data());
+	const size_t BufferSize = WorkingBuffer.size();
+	const size_t KeySize = InEncryptionKey.size();
+
+	// 2. Delegation to Zero-Allocation Core
+	DecryptInPlace(BufferData, BufferSize,
+	               reinterpret_cast<const uint8_t*>(InEncryptionKey.data()), KeySize,
+	               EncryptionSettings);
+
+	// 3. Header validation & Zero-Copy slice
+	const size_t WordSize = EncryptionSettings.EncryptionWord.size();
+	const int32_t NumberOfIV = EncryptionSettings.RandomIVSize + static_cast<int32_t>(KeySize);
+	const size_t TotalHeaderSize = WordSize + NumberOfIV;
+
+	if (BufferSize < TotalHeaderSize) return "";
+
+	if (std::memcmp(BufferData, EncryptionSettings.EncryptionWord.data(), WordSize) != 0)
+	{
+		return ""; // Invalid Header / Key mismatch
+	}
+
+	return WorkingBuffer.substr(TotalHeaderSize);
 }
 
 uint64_t SQRLLEncryption::ConvertCharsIntoInt(char InCharArray[8])
@@ -716,20 +680,203 @@ std::string SQRLLEncryption::ToBaseNNum(uintmax_t InNumber, const std::string_vi
 	return Result;
 }
 
-void SQRLLEncryption::BasicXORInPlace(uint8_t* Data, const size_t DataSize, const uint8_t* Key, const size_t KeySize)
+void SQRLLEncryption::BasicXORInPlace(uint8_t* __restrict Data, const size_t DataSize, const uint8_t* __restrict Key, const size_t KeySize) noexcept
+{
+    if (DataSize == 0 || KeySize == 0) return;
+
+    size_t i = 0;
+
+    // 1. AVX-512 PATH (64 bytes / cycle) - Compile ONLY if CPU target supports it
+#if defined(__AVX512F__)
+    if (GCPUFeatures.bHasAVX512F && DataSize >= 64)
+    {
+        uint8_t KeyBuf[64];
+        for (size_t k = 0; k < 64; ++k) KeyBuf[k] = Key[k % KeySize];
+
+        const __m512i KeyVec = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(KeyBuf));
+        const size_t ChunkLimit = DataSize & ~static_cast<size_t>(63);
+
+        for (; i < ChunkLimit; i += 64)
+        {
+            __m512i DataVec = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(Data + i));
+            DataVec = _mm512_xor_si512(DataVec, KeyVec);
+            _mm512_storeu_si512(reinterpret_cast<__m512i*>(Data + i), DataVec);
+        }
+    }
+#endif
+
+    // 2. AVX2 PATH (32 bytes / cycle)
+#if defined(__AVX2__)
+    if (GCPUFeatures.bHasAVX2 && (DataSize - i) >= 32)
+    {
+        uint8_t KeyBuf[32];
+        for (size_t k = 0; k < 32; ++k) KeyBuf[k] = Key[(i + k) % KeySize];
+
+        const __m256i KeyVec = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(KeyBuf));
+        const size_t ChunkLimit = i + ((DataSize - i) & ~static_cast<size_t>(31));
+
+        for (; i < ChunkLimit; i += 32)
+        {
+            __m256i DataVec = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(Data + i));
+            DataVec = _mm256_xor_si256(DataVec, KeyVec);
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(Data + i), DataVec);
+        }
+    }
+#endif
+
+    // 3. SSE4.1 PATH (16 bytes / cycle)
+#if defined(__SSE4_1__)
+    if (GCPUFeatures.bHasSSE41 && (DataSize - i) >= 16)
+    {
+        uint8_t KeyBuf[16];
+        for (size_t k = 0; k < 16; ++k) KeyBuf[k] = Key[(i + k) % KeySize];
+
+        const __m128i KeyVec = _mm_loadu_si128(reinterpret_cast<const __m128i*>(KeyBuf));
+        const size_t ChunkLimit = i + ((DataSize - i) & ~static_cast<size_t>(15));
+
+        for (; i < ChunkLimit; i += 16)
+        {
+            __m128i DataVec = _mm_loadu_si128(reinterpret_cast<const __m128i*>(Data + i));
+            DataVec = _mm_xor_si128(DataVec, KeyVec);
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(Data + i), DataVec);
+        }
+    }
+#endif
+
+    // 4. SCALAR FALLBACK (Tail / Safe)
+    size_t KeyIdx = i % KeySize;
+    for (; i < DataSize; ++i)
+    {
+        Data[i] ^= Key[KeyIdx];
+        if (++KeyIdx == KeySize) KeyIdx = 0;
+    }
+}
+
+void SQRLLEncryption::FusedForwardPass(uint8_t* Data, const size_t DataSize, const uint8_t* Key,
+	const size_t KeySize) noexcept
 {
 	if (DataSize == 0 || KeySize == 0) return;
 
-	size_t KeyIndex = 0;
+	uint8_t Acc = Key[0];
+	size_t KeyIdx = 0;
+
 	for (size_t i = 0; i < DataSize; ++i)
 	{
-		Data[i] ^= Key[KeyIndex];
+		uint8_t Byte = Data[i];
+		const uint8_t K = Key[KeyIdx];
 
-		// Branchless wrap-around instead of slow modulo (%)
-		if (++KeyIndex == KeySize)
-		{
-			KeyIndex = 0;
-		}
+		// 1. In-place XOR & Bit Flip
+		Byte ^= K;
+		Byte = static_cast<uint8_t>(~Byte ^ (K & 0x55));
+
+		// 2. Non-Linear ARX Diffusion (Add-Rotate-XOR)
+		Acc = static_cast<uint8_t>((Acc + K + i) & 0xFF);
+		const int Rot = K & 7;
+		const uint8_t Rotated = static_cast<uint8_t>((Byte << Rot) | (Byte >> ((8 - Rot) & 7)));
+
+		Data[i] = Rotated ^ Acc;
+
+		if (++KeyIdx == KeySize) KeyIdx = 0;
+	}
+}
+
+void SQRLLEncryption::FusedBackwardPass(uint8_t* Data, const size_t DataSize, const uint8_t* Key, const size_t KeySize) noexcept
+{
+	if (DataSize == 0 || KeySize == 0) return;
+
+	uint8_t Acc = Key[0];
+	size_t KeyIdx = 0;
+
+	for (size_t i = 0; i < DataSize; ++i)
+	{
+		const uint8_t K = Key[KeyIdx];
+		Acc = static_cast<uint8_t>((Acc + K + i) & 0xFF);
+
+		// 1. Reverse Non-Linear ARX Diffusion
+		const uint8_t XORed = Data[i] ^ Acc;
+		const int Rot = K & 7;
+		uint8_t Byte = static_cast<uint8_t>((XORed >> Rot) | (XORed << ((8 - Rot) & 7)));
+
+		// 2. Reverse Bit Flip & XOR
+		Byte = static_cast<uint8_t>(~(Byte ^ (K & 0x55)));
+		Data[i] = Byte ^ K;
+
+		if (++KeyIdx == KeySize) KeyIdx = 0;
+	}
+}
+
+void SQRLLBitFlipping::FlipDataInPlace(uint8_t* Data, const size_t DataSize, const uint8_t* FlipKey, const size_t KeySize) noexcept
+{
+	if (DataSize < 8 || KeySize == 0) return;
+
+	std::vector<uint64_t> Masks = SQRLLPredefinedXORMasks::GetEightMasks();
+	const size_t ChunkCount = DataSize / 8;
+
+	// Cast pointer to process 8 bytes simultaneously
+	uint64_t* __restrict Data64 = reinterpret_cast<uint64_t*>(Data);
+
+	size_t KeyIdx = 0;
+
+	// Process full 8-byte blocks
+	for (size_t i = 0; i < ChunkCount; ++i)
+	{
+		// Safe mask extraction using bitwise AND instead of modulo
+		Data64[i] ^= Masks[FlipKey[KeyIdx] & 7];
+
+		if (++KeyIdx == KeySize) KeyIdx = 0;
+	}
+
+	// Process remaining tail bytes (1 to 7 bytes)
+	const size_t TailStart = ChunkCount * 8;
+	for (size_t i = TailStart; i < DataSize; ++i)
+	{
+		Data[i] ^= static_cast<uint8_t>(Masks[FlipKey[KeyIdx] & 7] & 0xFF);
+		if (++KeyIdx == KeySize) KeyIdx = 0;
+	}
+}
+
+void SQRLLEncryption::NonLinearDiffusionForward(uint8_t* Data, const size_t Size, const uint8_t* Key,
+	const size_t KeySize) noexcept
+{
+	if (Size == 0 || KeySize == 0) return;
+
+	uint8_t Acc = Key[0];
+	size_t KeyIdx = 0;
+
+	for (size_t i = 0; i < Size; ++i)
+	{
+		uint8_t Byte = Data[i];
+		Acc = static_cast<uint8_t>((Acc + Key[KeyIdx] + i) & 0xFF);
+
+		// Rotacja bitowa zależna od klucza + nieliniowy akumulator
+		const int Rot = Key[KeyIdx] & 7;
+		uint8_t Rotated = static_cast<uint8_t>((Byte << Rot) | (Byte >> ((8 - Rot) & 7)));
+
+		Data[i] = Rotated ^ Acc;
+
+		if (++KeyIdx == KeySize) KeyIdx = 0;
+	}
+}
+
+void SQRLLEncryption::NonLinearDiffusionBackward(uint8_t* Data, const size_t Size, const uint8_t* Key,
+	const size_t KeySize) noexcept
+{
+	if (Size == 0 || KeySize == 0) return;
+
+	uint8_t Acc = Key[0];
+	size_t KeyIdx = 0;
+
+	for (size_t i = 0; i < Size; ++i)
+	{
+		Acc = static_cast<uint8_t>((Acc + Key[KeyIdx] + i) & 0xFF);
+
+		uint8_t XORed = Data[i] ^ Acc;
+		const int Rot = Key[KeyIdx] & 7;
+
+		// Odwrotna rotacja bitowa
+		Data[i] = static_cast<uint8_t>((XORed >> Rot) | (XORed << ((8 - Rot) & 7)));
+
+		if (++KeyIdx == KeySize) KeyIdx = 0;
 	}
 }
 
@@ -839,6 +986,54 @@ std::vector<uint8_t> SQRLLEncryption::RemoveRandomBytes(const std::vector<uint8_
 	}
 
 	return OutBytes;
+}
+
+void SQRLLEncryption::SIMDBlockReverse(uint8_t* __restrict Data, const size_t Size) noexcept
+{
+	if (!Data || Size == 0) return;
+
+	size_t i = 0;
+
+#if defined(__AVX2__)
+	if (GCPUFeatures.bHasAVX2 && Size >= 32)
+	{
+		const __m256i RevMask = _mm256_set_epi8(
+			0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+			0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+		);
+
+		const size_t LimitAVX2 = Size & ~static_cast<size_t>(31);
+		for (; i < LimitAVX2; i += 32)
+		{
+			__m256i Chunk = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(Data + i));
+			Chunk = _mm256_shuffle_epi8(Chunk, RevMask);
+			_mm256_storeu_si256(reinterpret_cast<__m256i*>(Data + i), Chunk);
+		}
+	}
+#elif defined(__SSE4_1__)
+	if (GCPUFeatures.bHasSSE41 && Size >= 16)
+	{
+		const __m128i RevMask = _mm_set_epi8(
+			0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+		);
+
+		const size_t LimitSSE = Size & ~static_cast<size_t>(15);
+		for (; i < LimitSSE; i += 16)
+		{
+			__m128i Chunk = _mm_loadu_si128(reinterpret_cast<const __m128i*>(Data + i));
+			Chunk = _mm_shuffle_epi8(Chunk, RevMask);
+			_mm_storeu_si128(reinterpret_cast<__m128i*>(Data + i), Chunk);
+		}
+	}
+#endif
+
+	// ------------------------------------------------------------------------
+	// SCALAR FALLBACK (ARM / Older x86 / Tail bytes)
+	// ------------------------------------------------------------------------
+	if (i < Size)
+	{
+		std::reverse(Data + i, Data + Size);
+	}
 }
 
 std::vector<uint8_t> SQRLLEncryption::StringToBytes(const std::string& Str)

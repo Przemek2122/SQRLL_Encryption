@@ -7,35 +7,6 @@
 #include <utility>
 #include <vector>
 
-class SQRLLXORCascade
-{
-public:
-	static void CascadeForward(std::vector<uint8_t>& Data);
-	static void CascadeBackward(std::vector<uint8_t>& Data);
-
-	/** Diffusion, everything affects everything */
-	static void FullDiffusion(std::vector<uint8_t>& Data, int Rounds = 3);
-};
-
-class SQRLLBitRotation
-{
-public:
-	static uint8_t RotateLeft(uint8_t Value, int Bits);
-	static uint8_t RotateRight(uint8_t Value, int Bits);
-	static void RotateDependingOnKey(std::vector<uint8_t>& Data, const std::vector<uint8_t>& Key);
-	static void UnrotateDependingOnKey(std::vector<uint8_t>& Data, const std::vector<uint8_t>& Key);
-};
-
-class SQRLLChunkConverter
-{
-public:
-	// Convert bytes to 64-bit chunks
-	static std::vector<uint64_t> BytesToChunks(const std::vector<uint8_t>& Bytes);
-
-	// Convert 64-bit chunks back to bytes
-	static std::vector<uint8_t> ChunksToBytes(const std::vector<uint64_t>& Chunks, size_t OriginalSize);
-};
-
 /** Simple predefined XOR masks */
 class SQRLLPredefinedXORMasks
 {
@@ -69,6 +40,49 @@ public:
 	static std::vector<uint64_t> GetEightMasks();
 };
 
+class SQRLLPredefinedCharsets
+{
+public:
+	static constexpr std::string_view BINARY = "01";
+	static constexpr std::string_view OCTAL = "01234567";
+	static constexpr std::string_view DECIMAL = "0123456789";
+	static constexpr std::string_view HEX_LOWER = "0123456789abcdef";
+	static constexpr std::string_view HEX_UPPER = "0123456789ABCDEF";
+	static constexpr std::string_view BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"; /** 0-9, a-z */
+	static constexpr std::string_view BASE62 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"; /** 0-9, a-z, A-Z */
+	static constexpr std::string_view BASE_EMAIL = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@._-+/*="; /** 0-9, a-z, A-Z, @._-+/*= */
+	static constexpr std::string_view BASE_SIMPLE_PASSWORD = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ !@#$%^&*()-_=+[]{}|/\\.,<>;:'?~\""; /** 0-9, a-z, A-Z, Special chars */
+};
+
+class SQRLLXORCascade
+{
+public:
+	static void CascadeForward(uint8_t* __restrict Data, size_t Size) noexcept;
+	static void CascadeBackward(uint8_t* __restrict Data, size_t Size) noexcept;
+
+	/** Diffusion, everything affects everything */
+	static void FullDiffusion(uint8_t* __restrict Data, size_t Size, int Rounds) noexcept;
+};
+
+class SQRLLBitRotation
+{
+public:
+	static uint8_t RotateLeft(uint8_t Value, int Bits);
+	static uint8_t RotateRight(uint8_t Value, int Bits);
+	static void RotateDependingOnKey(std::vector<uint8_t>& Data, const std::vector<uint8_t>& Key);
+	static void UnrotateDependingOnKey(std::vector<uint8_t>& Data, const std::vector<uint8_t>& Key);
+};
+
+class SQRLLChunkConverter
+{
+public:
+	// Convert bytes to 64-bit chunks
+	static std::vector<uint64_t> BytesToChunks(const std::vector<uint8_t>& Bytes);
+
+	// Convert 64-bit chunks back to bytes
+	static std::vector<uint8_t> ChunksToBytes(const std::vector<uint64_t>& Chunks, size_t OriginalSize);
+};
+
 class SQRLLBitFlipping
 {
 public:
@@ -84,6 +98,9 @@ public:
 
 	/** XOR - call flip to encrypt and decrypt */
 	static std::vector<uint8_t> FlipData(const std::vector<uint8_t>& InFlipData, const std::vector<uint8_t>& FlipKey);
+
+	/** Flip in place, less memory and faster */
+	static void FlipDataInPlace(uint8_t* Data, size_t DataSize, const uint8_t* FlipKey, size_t KeySize) noexcept;
 };
 
 class SQRLLShuffle
@@ -112,20 +129,6 @@ public:
 	static std::vector<uint8_t> FFunction(const std::vector<uint8_t>& Input, const std::vector<uint8_t>& Key, int Round);
 
 	static uint8_t RotateLeft(uint8_t Value, int Bits);
-};
-
-class SQRLLPredefinedCharsets
-{
-public:
-	static constexpr std::string_view BINARY = "01";
-	static constexpr std::string_view OCTAL = "01234567";
-	static constexpr std::string_view DECIMAL = "0123456789";
-	static constexpr std::string_view HEX_LOWER = "0123456789abcdef";
-	static constexpr std::string_view HEX_UPPER = "0123456789ABCDEF";
-	static constexpr std::string_view BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"; /** 0-9, a-z */
-	static constexpr std::string_view BASE62 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"; /** 0-9, a-z, A-Z */
-	static constexpr std::string_view BASE_EMAIL = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@._-+/*="; /** 0-9, a-z, A-Z, @._-+/*= */
-	static constexpr std::string_view BASE_SIMPLE_PASSWORD = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ !@#$%^&*()-_=+[]{}|/\\.,<>;:'?~\""; /** 0-9, a-z, A-Z, Special chars */
 };
 
 /**
@@ -215,8 +218,10 @@ public:
 	 */
 	static std::string ToBaseNNum(uintmax_t InNumber, std::string_view InCharSet);
 
-	static std::vector<uint8_t> BasicEncryptionWork(const std::vector<uint8_t>& InputBytes, const std::vector<uint8_t>& EncryptionKeyBytes);
-	static std::vector<uint8_t> BasicDecryptionWork(std::vector<uint8_t> InputBytes, const std::vector<uint8_t>& EncryptionKeyBytes);
+	/** Perform basic XOR encryption directly in the provided memory buffer */
+	static void BasicXORInPlace(uint8_t* __restrict Data, const size_t DataSize, const uint8_t* __restrict Key, const size_t KeySize);
+
+	static void FlipDataInPlace(uint8_t* __restrict Data, const size_t DataSize, const uint8_t* __restrict FlipKey, const size_t KeySize) noexcept;
 
 	static std::vector<uint8_t> AddRandomBytes(const std::vector<uint8_t>& InputBytes, const std::string& InEncryptionKey);
 	static std::vector<uint8_t> RemoveRandomBytes(const std::vector<uint8_t>& InputBytes, const std::string& InEncryptionKey);

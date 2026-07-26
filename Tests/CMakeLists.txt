@@ -15,6 +15,18 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(googletest)
 
+# ── MbedTLS (For AES and ChaCha20 Benchmarks) ────────────────────────
+FetchContent_Declare(
+        mbedtls
+        GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
+        GIT_TAG        v3.6.0
+)
+# Disable unnecessary MbedTLS build targets
+set(ENABLE_PROGRAMS OFF CACHE BOOL "Disable mbedtls programs" FORCE)
+set(ENABLE_TESTING OFF CACHE BOOL "Disable mbedtls tests" FORCE)
+set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "Disable warnings as errors in mbedtls" FORCE)
+FetchContent_MakeAvailable(mbedtls)
+
 # ── Encryption library from sibling directory ────────────────────────
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../Encryption ${CMAKE_CURRENT_BINARY_DIR}/Encryption)
 
@@ -27,6 +39,7 @@ target_link_libraries(${PROJECT_NAME}
     PRIVATE
         SQRLL_Encryption
         GTest::gtest_main
+        mbedcrypto
 )
 
 # ── CTest integration ───────────────────────────────────────────────

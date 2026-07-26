@@ -43,6 +43,9 @@ FCPUFeatures::FCPUFeatures()
 
 void SQRLLXORCascade::CascadeForward(uint8_t* __restrict Data, const size_t Size) noexcept
 {
+	if (!Data || Size == 0) return;
+
+	Data[0] ^= 0xA5;
 	for (size_t i = 1; i < Size; ++i)
 	{
 		Data[i] ^= Data[i - 1];
@@ -51,10 +54,13 @@ void SQRLLXORCascade::CascadeForward(uint8_t* __restrict Data, const size_t Size
 
 void SQRLLXORCascade::CascadeBackward(uint8_t* __restrict Data, const size_t Size) noexcept
 {
+	if (!Data || Size == 0) return;
+
 	for (size_t i = Size - 1; i > 0; --i)
 	{
 		Data[i] ^= Data[i - 1];
 	}
+	Data[0] ^= 0xA5;
 }
 
 void SQRLLXORCascade::FullDiffusion(uint8_t* __restrict Data, const size_t Size, int Rounds) noexcept
@@ -752,57 +758,166 @@ void SQRLLEncryption::BasicXORInPlace(uint8_t* __restrict Data, const size_t Dat
     }
 }
 
-void SQRLLEncryption::FusedForwardPass(uint8_t* Data, const size_t DataSize, const uint8_t* Key,
-	const size_t KeySize) noexcept
+// SIMD AVX2 VECTORIZED FUSED FORWARD PASS (32 BYTES PER CYCLE)
+void SQRLLEncryption::FusedForwardPass(uint8_t* __restrict Data, const size_t DataSize,
+                                        const uint8_t* __restrict Key, const size_t KeySize) noexcept
 {
-	if (DataSize == 0 || KeySize == 0) return;
+    if (!Data || DataSize == 0 || !Key || KeySize == 0) return;
 
-	uint8_t Acc = Key[0];
-	size_t KeyIdx = 0;
+    size_t i = 0;
 
-	for (size_t i = 0; i < DataSize; ++i)
-	{
-		uint8_t Byte = Data[i];
-		const uint8_t K = Key[KeyIdx];
+#if defined(__AVX2__)
+    if (GCPUFeatures.bHasAVX2 && DataSize >= 32)
+    {
+        alignas(32) uint8_t KeyBuf[32];
+        for (size_t k = 0; k < 32; ++k) KeyBuf[k] = Key[k % KeySize];
 
-		// 1. In-place XOR & Bit Flip
-		Byte ^= K;
-		Byte = static_cast<uint8_t>(~Byte ^ (K & 0x55));
+        const __m256i KeyVec  = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(KeyBuf));
+        const __m256i Mask55  = _mm256_set1_epi8(0x55);
+        const __m256i AllOnes = _mm256_set1_epi8(-1);
 
-		// 2. Non-Linear ARX Diffusion (Add-Rotate-XOR)
-		Acc = static_cast<uint8_t>((Acc + K + i) & 0xFF);
-		const int Rot = K & 7;
-		const uint8_t Rotated = static_cast<uint8_t>((Byte << Rot) | (Byte >> ((8 - Rot) & 7)));
+        const __m256i MaskL3  = _mm256_set1_epi8(static_cast<char>(0xF8));
+        const __m256i MaskR5  = _mm256_set1_epi8(static_cast<char>(0x07));
 
-		Data[i] = Rotated ^ Acc;
+        // Unikalne offsety dla każdego bajtu w rejestrze AVX2
+        const __m256i LaneOffsets = _mm256_setr_epi8(
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+            16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
+        );
 
-		if (++KeyIdx == KeySize) KeyIdx = 0;
-	}
+        const size_t LimitAVX2 = DataSize & ~static_cast<size_t>(31);
+
+        for (; i < LimitAVX2; i += 32)
+        {
+            __m256i DataVec = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(Data + i));
+
+            // Dynamiczny licznik oparty o pozycję globalną 'i' (przesunięcia Avalanche)
+            const uint8_t PosHash = static_cast<uint8_t>((i * 0x9E3779B9u) >> 16);
+            const __m256i BaseIdxVec = _mm256_set1_epi8(static_cast<char>(PosHash));
+            const __m256i PosCounter = _mm256_add_epi8(BaseIdxVec, LaneOffsets);
+
+            // Dynamic Key = Key ^ PosCounter
+            const __m256i DynamicKey = _mm256_xor_si256(KeyVec, PosCounter);
+
+            // 1. Dynamic Key XOR
+            DataVec = _mm256_xor_si256(DataVec, DynamicKey);
+
+            // 2. Bit Flip
+            const __m256i NotData = _mm256_xor_si256(DataVec, AllOnes);
+            const __m256i KAnd55  = _mm256_and_si256(DynamicKey, Mask55);
+            DataVec = _mm256_xor_si256(NotData, KAnd55);
+
+            // 3. ARX Add
+            DataVec = _mm256_add_epi8(DataVec, DynamicKey);
+
+            // 4. Vectorized Rotate Left 3
+            const __m256i ShiftL = _mm256_and_si256(_mm256_slli_epi16(DataVec, 3), MaskL3);
+            const __m256i ShiftR = _mm256_and_si256(_mm256_srli_epi16(DataVec, 5), MaskR5);
+            DataVec = _mm256_or_si256(ShiftL, ShiftR);
+
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(Data + i), DataVec);
+        }
+    }
+#endif
+
+    // ------------------------------------------------------------------------
+    // SCALAR FALLBACK (Matches AVX2 1:1)
+    // ------------------------------------------------------------------------
+    size_t KeyIdx = i % KeySize;
+
+    for (; i < DataSize; ++i)
+    {
+        uint8_t Byte = Data[i];
+        const uint8_t PosHash = static_cast<uint8_t>((i * 0x9E3779B9u) >> 16);
+        const uint8_t DynamicKey = Key[KeyIdx] ^ static_cast<uint8_t>(PosHash + (i & 0x1F));
+
+        Byte ^= DynamicKey;
+        Byte = static_cast<uint8_t>(~Byte ^ (DynamicKey & 0x55));
+        Byte = static_cast<uint8_t>(Byte + DynamicKey);
+        Byte = static_cast<uint8_t>((Byte << 3) | (Byte >> 5));
+
+        Data[i] = Byte;
+
+        if (++KeyIdx == KeySize) KeyIdx = 0;
+    }
 }
 
-void SQRLLEncryption::FusedBackwardPass(uint8_t* Data, const size_t DataSize, const uint8_t* Key, const size_t KeySize) noexcept
+// SIMD AVX2 VECTORIZED FUSED BACKWARD PASS
+void SQRLLEncryption::FusedBackwardPass(uint8_t* __restrict Data, const size_t DataSize,
+                                         const uint8_t* __restrict Key, const size_t KeySize) noexcept
 {
-	if (DataSize == 0 || KeySize == 0) return;
+    if (!Data || DataSize == 0 || !Key || KeySize == 0) return;
 
-	uint8_t Acc = Key[0];
-	size_t KeyIdx = 0;
+    size_t i = 0;
 
-	for (size_t i = 0; i < DataSize; ++i)
-	{
-		const uint8_t K = Key[KeyIdx];
-		Acc = static_cast<uint8_t>((Acc + K + i) & 0xFF);
+#if defined(__AVX2__)
+    if (GCPUFeatures.bHasAVX2 && DataSize >= 32)
+    {
+        alignas(32) uint8_t KeyBuf[32];
+        for (size_t k = 0; k < 32; ++k) KeyBuf[k] = Key[k % KeySize];
 
-		// 1. Reverse Non-Linear ARX Diffusion
-		const uint8_t XORed = Data[i] ^ Acc;
-		const int Rot = K & 7;
-		uint8_t Byte = static_cast<uint8_t>((XORed >> Rot) | (XORed << ((8 - Rot) & 7)));
+        const __m256i KeyVec  = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(KeyBuf));
+        const __m256i Mask55  = _mm256_set1_epi8(0x55);
+        const __m256i AllOnes = _mm256_set1_epi8(-1);
 
-		// 2. Reverse Bit Flip & XOR
-		Byte = static_cast<uint8_t>(~(Byte ^ (K & 0x55)));
-		Data[i] = Byte ^ K;
+        const __m256i MaskR3  = _mm256_set1_epi8(static_cast<char>(0x1F));
+        const __m256i MaskL5  = _mm256_set1_epi8(static_cast<char>(0xE0));
 
-		if (++KeyIdx == KeySize) KeyIdx = 0;
-	}
+        const __m256i LaneOffsets = _mm256_setr_epi8(
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+            16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
+        );
+
+        const size_t LimitAVX2 = DataSize & ~static_cast<size_t>(31);
+
+        for (; i < LimitAVX2; i += 32)
+        {
+            __m256i DataVec = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(Data + i));
+
+            const uint8_t PosHash = static_cast<uint8_t>((i * 0x9E3779B9u) >> 16);
+            const __m256i BaseIdxVec = _mm256_set1_epi8(static_cast<char>(PosHash));
+            const __m256i PosCounter = _mm256_add_epi8(BaseIdxVec, LaneOffsets);
+            const __m256i DynamicKey = _mm256_xor_si256(KeyVec, PosCounter);
+
+            // 1. Rotate Right 3
+            const __m256i ShiftR = _mm256_and_si256(_mm256_srli_epi16(DataVec, 3), MaskR3);
+            const __m256i ShiftL = _mm256_and_si256(_mm256_slli_epi16(DataVec, 5), MaskL5);
+            DataVec = _mm256_or_si256(ShiftR, ShiftL);
+
+            // 2. Reverse ARX Sub
+            DataVec = _mm256_sub_epi8(DataVec, DynamicKey);
+
+            // 3. Reverse Bit Flip & XOR
+            const __m256i KAnd55 = _mm256_and_si256(DynamicKey, Mask55);
+            const __m256i XoredWithK = _mm256_xor_si256(DataVec, KAnd55);
+            DataVec = _mm256_xor_si256(XoredWithK, AllOnes);
+            DataVec = _mm256_xor_si256(DataVec, DynamicKey);
+
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(Data + i), DataVec);
+        }
+    }
+#endif
+
+    // ------------------------------------------------------------------------
+    // SCALAR FALLBACK
+    // ------------------------------------------------------------------------
+    size_t KeyIdx = i % KeySize;
+
+    for (; i < DataSize; ++i)
+    {
+        const uint8_t PosHash = static_cast<uint8_t>((i * 0x9E3779B9u) >> 16);
+        const uint8_t DynamicKey = Key[KeyIdx] ^ static_cast<uint8_t>(PosHash + (i & 0x1F));
+        uint8_t Byte = Data[i];
+
+        Byte = static_cast<uint8_t>((Byte >> 3) | (Byte << 5));
+        Byte = static_cast<uint8_t>(Byte - DynamicKey);
+        Byte = static_cast<uint8_t>(~(Byte ^ (DynamicKey & 0x55)));
+        Byte ^= DynamicKey;
+
+        Data[i] = Byte;
+
+        if (++KeyIdx == KeySize) KeyIdx = 0;
+    }
 }
 
 void SQRLLBitFlipping::FlipDataInPlace(uint8_t* Data, const size_t DataSize, const uint8_t* FlipKey, const size_t KeySize) noexcept

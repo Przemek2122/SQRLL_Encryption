@@ -207,6 +207,13 @@ void SQRLLBitFlipping::FlipDataInPlace(uint8_t* Data, const size_t DataSize, con
 	}
 }
 
+uint64_t SQRLLShuffle::BoundedRandom(std::mt19937_64& Rng, uint64_t Bound)
+{
+	uint64_t X = Rng();
+	__uint128_t M = static_cast<__uint128_t>(X) * static_cast<__uint128_t>(Bound);
+	return static_cast<uint64_t>(M >> 64);
+}
+
 void SQRLLShuffle::Forward(std::vector<uint8_t>& InputBytes, const std::vector<uint8_t>& EncryptionKeyBytes)
 {
 	if (InputBytes.empty() || EncryptionKeyBytes.empty())
@@ -214,12 +221,15 @@ void SQRLLShuffle::Forward(std::vector<uint8_t>& InputBytes, const std::vector<u
 		return;
 	}
 
-	// Generate seed from key
 	uint64_t Seed = GenerateSeed(EncryptionKeyBytes);
-
-	// Shuffle bytes deterministically
 	std::mt19937_64 Rng(Seed);
-	std::shuffle(InputBytes.begin(), InputBytes.end(), Rng);
+
+	const size_t N = InputBytes.size();
+	for (size_t i = N - 1; i > 0; --i)
+	{
+		size_t j = static_cast<size_t>(BoundedRandom(Rng, i + 1));
+		std::swap(InputBytes[i], InputBytes[j]);
+	}
 }
 
 void SQRLLShuffle::Backward(std::vector<uint8_t>& InputBytes, const std::vector<uint8_t>& EncryptionKeyBytes)
@@ -229,31 +239,21 @@ void SQRLLShuffle::Backward(std::vector<uint8_t>& InputBytes, const std::vector<
 		return;
 	}
 
-	// Generate same seed from key
 	uint64_t Seed = GenerateSeed(EncryptionKeyBytes);
-
-	// Recreate the shuffle permutation
-	std::vector<size_t> Indices(InputBytes.size());
-	std::iota(Indices.begin(), Indices.end(), 0);
-
 	std::mt19937_64 Rng(Seed);
-	std::shuffle(Indices.begin(), Indices.end(), Rng);
 
-	// Create inverse permutation
-	std::vector<size_t> InverseIndices(InputBytes.size());
-	for (size_t i = 0; i < Indices.size(); ++i)
+	const size_t N = InputBytes.size();
+
+	std::vector<size_t> Js(N > 0 ? N - 1 : 0);
+	for (size_t i = N - 1; i > 0; --i)
 	{
-		InverseIndices[Indices[i]] = i;
+		Js[i - 1] = static_cast<size_t>(BoundedRandom(Rng, i + 1));
 	}
 
-	// Apply inverse permutation to restore original order
-	std::vector<uint8_t> Result(InputBytes.size());
-	for (size_t i = 0; i < InputBytes.size(); ++i)
+	for (size_t i = 1; i < N; ++i)
 	{
-		Result[i] = InputBytes[InverseIndices[i]];
+		std::swap(InputBytes[i], InputBytes[Js[i - 1]]);
 	}
-
-	InputBytes = Result;
 }
 
 uint64_t SQRLLShuffle::GenerateSeed(const std::vector<uint8_t>& EncryptionKeyBytes)

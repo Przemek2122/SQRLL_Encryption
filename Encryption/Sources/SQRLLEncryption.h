@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstdint>
+#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -106,6 +107,8 @@ public:
 class SQRLLShuffle
 {
 public:
+	static uint64_t BoundedRandom(std::mt19937_64& Rng, uint64_t Bound);
+
 	// Randomize
 	static void Forward(std::vector<uint8_t>& InputBytes, const std::vector<uint8_t>& EncryptionKeyBytes);
 

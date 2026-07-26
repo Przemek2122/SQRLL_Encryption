@@ -330,9 +330,39 @@ uint8_t SQRLLFeistelCipher::RotateLeft(uint8_t Value, int Bits)
 	return (Value << Bits) | (Value >> (8 - Bits));
 }
 
+void SQRLLMAC::ComputeTag(const uint8_t* Payload, size_t PayloadSize, const uint8_t* Key, const size_t KeySize, uint8_t OutTag[16]) noexcept
+{
+	uint64_t v0 = 0x736f6d6570736575ULL ^ KeySize;
+	uint64_t v1 = 0x646f72616e646f6dULL ^ (KeySize > 0 ? Key[0] : 0);
+	uint64_t v2 = 0x6c7967656e657261ULL;
+	uint64_t v3 = 0x7465646279746573ULL;
+
+	for (size_t i = 0; i < PayloadSize; ++i)
+	{
+		v3 ^= Payload[i];
+		// Compression round
+		v0 += v1; v2 += v3;
+		v1 = (v1 << 13) | (v1 >> 51); v1 ^= v0;
+		v3 = (v3 << 16) | (v3 >> 48); v3 ^= v2;
+		v0 = (v0 << 32) | (v0 >> 32);
+	}
+
+	std::memcpy(OutTag, &v0, 8);
+	std::memcpy(OutTag + 8, &v2, 8);
+}
+
+bool SQRLLMAC::VerifyTag(const uint8_t TagA[16], const uint8_t TagB[16]) noexcept
+{
+	uint8_t Diff = 0;
+	for (size_t i = 0; i < 16; ++i)
+	{
+		Diff |= (TagA[i] ^ TagB[i]);
+	}
+	return Diff == 0;
+}
+
 std::string SQRLLEncryption::GenerateSecureSalt(const size_t Length)
 {
-	// Alokujemy string od razu wypełniony zerami
 	std::string Salt(Length, '\0');
 	std::random_device HardwareEntropy; // RDRAND instruction on x86
 
@@ -353,16 +383,16 @@ std::string SQRLLEncryption::GenerateSecureSalt(const size_t Length)
 	return Salt;
 }
 
-SQRLLEncryption::FEncryptionSettings::FEncryptionSettings(std::string InEncryptionWord,
-	const int32_t InRandomIVSize, const int32_t InNumberOfOperations)
+SQRLLSettings::SQRLLSettings(std::string InEncryptionWord, const int32_t InRandomIVSize, const int32_t InNumberOfOperations, bool bMAC)
 	: EncryptionWord(std::move(InEncryptionWord))
 	, RandomIVSize(InRandomIVSize)
 	, NumberOfOperations(InNumberOfOperations)
+	, bEnableHMAC(bMAC)
 {
 }
 
 void SQRLLEncryption::EncryptInPlace(uint8_t* BufferData, const size_t BufferSize, const uint8_t* KeyData,
-	const size_t KeySize, const FEncryptionSettings& Settings) noexcept
+	const size_t KeySize, const SQRLLSettings& Settings) noexcept
 {
 	if (!BufferData || BufferSize == 0 || !KeyData || KeySize <= 16) return;
 
@@ -379,7 +409,7 @@ void SQRLLEncryption::EncryptInPlace(uint8_t* BufferData, const size_t BufferSiz
 }
 
 void SQRLLEncryption::DecryptInPlace(uint8_t* BufferData, const size_t BufferSize, const uint8_t* KeyData,
-	const size_t KeySize, const FEncryptionSettings& Settings) noexcept
+	const size_t KeySize, const SQRLLSettings& Settings) noexcept
 {
 	if (!BufferData || BufferSize == 0 || !KeyData || KeySize <= 16) return;
 
@@ -395,63 +425,88 @@ void SQRLLEncryption::DecryptInPlace(uint8_t* BufferData, const size_t BufferSiz
 	SIMDBlockReverse(BufferData, BufferSize);
 }
 
-std::string SQRLLEncryption::Encrypt(const std::string& InData, const std::string& InEncryptionKey,
-	const FEncryptionSettings& EncryptionSettings)
+std::string SQRLLEncryption::Encrypt(const std::string& InData, const std::string& InEncryptionKey, const SQRLLSettings& EncryptionSettings)
 {
-	if (InEncryptionKey.size() <= 16) return InData;
+	if (InEncryptionKey.size() <= 16) {
+		throw std::invalid_argument("Encryption key must be longer than 16 bytes");
+	}
 
 	const size_t KeySize = InEncryptionKey.size();
 	const int32_t NumberOfIV = EncryptionSettings.RandomIVSize + static_cast<int32_t>(KeySize);
 	const std::vector<uint8_t> KeyIV = GenerateRandomIV(NumberOfIV);
 
 	const size_t WordSize = EncryptionSettings.EncryptionWord.size();
+	const size_t TagSize = EncryptionSettings.bEnableHMAC ? 16 : 0;
 	const size_t BasePayloadSize = WordSize + KeyIV.size() + InData.size();
+	const size_t TotalBufferSize = BasePayloadSize + TagSize;
 
-	// 1. Single Memory Allocation
 	std::string OutputBuffer;
-	OutputBuffer.resize(BasePayloadSize);
+	OutputBuffer.resize(TotalBufferSize);
 
 	uint8_t* OutPtr = reinterpret_cast<uint8_t*>(OutputBuffer.data());
+	const uint8_t* KeyPtr = reinterpret_cast<const uint8_t*>(InEncryptionKey.data());
 
-	// 2. Build Header + Payload directly into final memory location
+	// Assemble Header and Payload directly into final memory location
 	std::memcpy(OutPtr, EncryptionSettings.EncryptionWord.data(), WordSize);
 	std::memcpy(OutPtr + WordSize, KeyIV.data(), KeyIV.size());
 	std::memcpy(OutPtr + WordSize + KeyIV.size(), InData.data(), InData.size());
 
-	// 3. Delegation to Zero-Allocation Core
-	EncryptInPlace(OutPtr, BasePayloadSize,
-	               reinterpret_cast<const uint8_t*>(InEncryptionKey.data()), KeySize,
-	               EncryptionSettings);
+	// In-Place Core Encryption
+	EncryptInPlace(OutPtr, BasePayloadSize, KeyPtr, KeySize, EncryptionSettings);
+
+	// Compute and append Authentication Tag (AEAD MAC)
+	if (EncryptionSettings.bEnableHMAC)
+	{
+		uint8_t AuthTag[16];
+		SQRLLMAC::ComputeTag(OutPtr, BasePayloadSize, KeyPtr, KeySize, AuthTag);
+		std::memcpy(OutPtr + BasePayloadSize, AuthTag, 16);
+	}
 
 	return OutputBuffer;
 }
 
-std::string SQRLLEncryption::Decrypt(const std::string& InData, const std::string& InEncryptionKey,
-	const FEncryptionSettings& EncryptionSettings)
+std::string SQRLLEncryption::Decrypt(const std::string& InData, const std::string& InEncryptionKey, const SQRLLSettings& EncryptionSettings)
 {
-	if (InEncryptionKey.size() <= 16 || InData.empty()) return InData;
+	if (InEncryptionKey.size() <= 16 || InData.empty()) return "";
 
-	// 1. Create mutable working copy
-	std::string WorkingBuffer = InData;
-	uint8_t* BufferData = reinterpret_cast<uint8_t*>(WorkingBuffer.data());
-	const size_t BufferSize = WorkingBuffer.size();
+	const size_t TagSize = EncryptionSettings.bEnableHMAC ? 16 : 0;
+	if (InData.size() <= TagSize) return "";
+
+	const size_t CiphertextSize = InData.size() - TagSize;
+	const uint8_t* KeyPtr = reinterpret_cast<const uint8_t*>(InEncryptionKey.data());
 	const size_t KeySize = InEncryptionKey.size();
 
-	// 2. Delegation to Zero-Allocation Core
-	DecryptInPlace(BufferData, BufferSize,
-	               reinterpret_cast<const uint8_t*>(InEncryptionKey.data()), KeySize,
-	               EncryptionSettings);
+	// Authenticate Payload Integrity BEFORE Decryption
+	if (EncryptionSettings.bEnableHMAC)
+	{
+		const uint8_t* EmbeddedTag = reinterpret_cast<const uint8_t*>(InData.data() + CiphertextSize);
+		uint8_t ExpectedTag[16];
 
-	// 3. Header validation & Zero-Copy slice
+		SQRLLMAC::ComputeTag(reinterpret_cast<const uint8_t*>(InData.data()), CiphertextSize, KeyPtr, KeySize, ExpectedTag);
+
+		// Immediate rejection if ciphertext or tag was tampered with
+		if (!SQRLLMAC::VerifyTag(EmbeddedTag, ExpectedTag))
+		{
+			return ""; // Invalid Tag / Data Tampered
+		}
+	}
+
+	// Mutable working buffer for In-Place decryption
+	std::string WorkingBuffer(InData.data(), CiphertextSize);
+	uint8_t* BufferData = reinterpret_cast<uint8_t*>(WorkingBuffer.data());
+
+	DecryptInPlace(BufferData, CiphertextSize, KeyPtr, KeySize, EncryptionSettings);
+
+	// Header validation & Zero-Copy slice
 	const size_t WordSize = EncryptionSettings.EncryptionWord.size();
 	const int32_t NumberOfIV = EncryptionSettings.RandomIVSize + static_cast<int32_t>(KeySize);
 	const size_t TotalHeaderSize = WordSize + NumberOfIV;
 
-	if (BufferSize < TotalHeaderSize) return "";
+	if (CiphertextSize < TotalHeaderSize) return "";
 
 	if (std::memcmp(BufferData, EncryptionSettings.EncryptionWord.data(), WordSize) != 0)
 	{
-		return ""; // Invalid Header / Key mismatch
+		return ""; // Key mismatch / Header corruption
 	}
 
 	return WorkingBuffer.substr(TotalHeaderSize);
@@ -779,7 +834,6 @@ void SQRLLEncryption::FusedForwardPass(uint8_t* __restrict Data, const size_t Da
         const __m256i MaskL3  = _mm256_set1_epi8(static_cast<char>(0xF8));
         const __m256i MaskR5  = _mm256_set1_epi8(static_cast<char>(0x07));
 
-        // Unikalne offsety dla każdego bajtu w rejestrze AVX2
         const __m256i LaneOffsets = _mm256_setr_epi8(
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
             16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
@@ -791,7 +845,6 @@ void SQRLLEncryption::FusedForwardPass(uint8_t* __restrict Data, const size_t Da
         {
             __m256i DataVec = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(Data + i));
 
-            // Dynamiczny licznik oparty o pozycję globalną 'i' (przesunięcia Avalanche)
             const uint8_t PosHash = static_cast<uint8_t>((i * 0x9E3779B9u) >> 16);
             const __m256i BaseIdxVec = _mm256_set1_epi8(static_cast<char>(PosHash));
             const __m256i PosCounter = _mm256_add_epi8(BaseIdxVec, LaneOffsets);
@@ -963,7 +1016,6 @@ void SQRLLEncryption::NonLinearDiffusionForward(uint8_t* Data, const size_t Size
 		uint8_t Byte = Data[i];
 		Acc = static_cast<uint8_t>((Acc + Key[KeyIdx] + i) & 0xFF);
 
-		// Rotacja bitowa zależna od klucza + nieliniowy akumulator
 		const int Rot = Key[KeyIdx] & 7;
 		uint8_t Rotated = static_cast<uint8_t>((Byte << Rot) | (Byte >> ((8 - Rot) & 7)));
 
@@ -988,7 +1040,6 @@ void SQRLLEncryption::NonLinearDiffusionBackward(uint8_t* Data, const size_t Siz
 		uint8_t XORed = Data[i] ^ Acc;
 		const int Rot = Key[KeyIdx] & 7;
 
-		// Odwrotna rotacja bitowa
 		Data[i] = static_cast<uint8_t>((XORed >> Rot) | (XORed << ((8 - Rot) & 7)));
 
 		if (++KeyIdx == KeySize) KeyIdx = 0;

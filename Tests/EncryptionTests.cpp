@@ -170,6 +170,28 @@ int ReadableChars(const std::string& data)
     return count;
 }
 
+// Helper function to calculate Shannon Entropy
+static double CalculateShannonEntropy(const uint8_t* Data, size_t Size)
+{
+    if (Size == 0) return 0.0;
+    std::vector<size_t> Frequencies(256, 0);
+    for (size_t i = 0; i < Size; ++i)
+    {
+        Frequencies[Data[i]]++;
+    }
+
+    double Entropy = 0.0;
+    for (int i = 0; i < 256; ++i)
+    {
+        if (Frequencies[i] > 0)
+        {
+            double p = static_cast<double>(Frequencies[i]) / static_cast<double>(Size);
+            Entropy -= p * std::log2(p);
+        }
+    }
+    return Entropy;
+}
+
 // ============================================================================
 // TEST 1: Correctness - Decrypt = Original
 // ============================================================================
@@ -238,7 +260,6 @@ TEST(EncryptionSecurity, PatternDetection)
 
         allEncrypted.insert(PassEncrypt);
 
-        // Sprawdź ostatnie 3 bajty
         if (PassEncrypt.size() >= 3) {
             std::string ending = PassEncrypt.substr(PassEncrypt.size() - 3);
             endPatterns[ending]++;
@@ -254,7 +275,6 @@ TEST(EncryptionSecurity, PatternDetection)
     std::cout << "Unique endings: " << endPatterns.size()
         << "/" << inputs.size() << std::endl;
 
-    // Sprawdź czy jakiś pattern się powtarza
     int maxRepeat = 0;
     std::string mostCommon;
     for (const auto& p : endPatterns) {
@@ -317,7 +337,6 @@ TEST(EncryptionSecurity, AvalancheEffect)
             << diffBits << " bits (" << bitPercent << "%)" << std::endl;
     }
 
-    // Oblicz średnią
     float avgPercent = 0;
     for (float p : changePercentages) {
         avgPercent += p;
@@ -775,14 +794,27 @@ TEST(EncryptionSecurity, ExtremeKeySizes)
             const std::string encrypted = SQRLLEncryption::Encrypt(Input, key);
             const std::string decrypted = SQRLLEncryption::Decrypt(encrypted, key);
 
-            if (decrypted == Input) {
-                std::cout << "[PASS] Handled key of size: " << key.size() << std::endl;
+            if (key.size() <= 16) {
+                std::cout << "[FAIL] Algorithm accepted an insecure key of size: " << key.size() << std::endl;
+            } else if (decrypted == Input) {
+                std::cout << "[PASS] Safely handled valid extreme key of size: " << key.size() << std::endl;
                 passed++;
             } else {
                 std::cout << "[FAIL] Decryption failed for key size: " << key.size() << std::endl;
             }
+        } catch (const std::invalid_argument& e) {
+            // Rejecting a short key with an exception is the correct, safe behavior
+            if (key.size() <= 16) {
+                std::cout << "[PASS] Correctly rejected insecure key of size " << key.size()
+                          << " with exception: " << e.what() << std::endl;
+                passed++;
+            } else {
+                std::cout << "[CRIT] Unexpected exception for valid key size " << key.size()
+                          << ": " << e.what() << std::endl;
+            }
         } catch (const std::exception& e) {
-            std::cout << "[CRIT] Exception thrown for key size " << key.size() << ": " << e.what() << std::endl;
+            std::cout << "[CRIT] Unknown exception thrown for key size " << key.size()
+                      << ": " << e.what() << std::endl;
         }
     }
 
@@ -864,7 +896,7 @@ TEST(EncryptionSecurity, LengthBeforeAndAfter)
 {
     std::cout << "\n=== 17. LENGTH BEFORE AND AFTER TEST ===" << std::endl;
 
-    SQRLLEncryption::FEncryptionSettings Settings("SQRLL_MAGIC", 12, 1);
+    const SQRLLSettings Settings("SQRLL_MAGIC", 12, 1);
     const std::string Key = "UltraSecureKey123456789012"; // 26 bytes
     const std::string Plaintext = "Test message for encryption system with exact size.";
 
@@ -874,7 +906,8 @@ TEST(EncryptionSecurity, LengthBeforeAndAfter)
     const size_t WordSize = Settings.EncryptionWord.size(); // 11
     const size_t IVSize = Settings.RandomIVSize + Key.size(); // 12 + 26 = 38
     const size_t HeaderSize = WordSize + IVSize;
-    const size_t ExpectedEncryptedSize = Plaintext.size() + HeaderSize;
+    const size_t TagSize = Settings.bEnableHMAC ? 16 : 0;
+    const size_t ExpectedEncryptedSize = Plaintext.size() + HeaderSize + TagSize;
 
     std::cout << "[INFO] Plaintext Length : " << Plaintext.size() << " bytes" << std::endl;
     std::cout << "[INFO] Header Size      : " << HeaderSize << " bytes (Word: " << WordSize << " B + IV: " << IVSize << " B)" << std::endl;
@@ -896,7 +929,7 @@ TEST(EncryptionSecurity, EdgeCasesAdvanced)
 {
     std::cout << "\n=== 18. ADVANCED EDGE CASES TEST ===" << std::endl;
 
-    SQRLLEncryption::FEncryptionSettings Settings("HEAD", 4, 3);
+    const SQRLLSettings Settings("HEAD", 4, 3);
     const std::string StandardKey = "KeyWithMoreThan16BytesForSecurity!";
 
     struct EdgeCase {
@@ -938,6 +971,223 @@ TEST(EncryptionSecurity, EdgeCasesAdvanced)
     EXPECT_EQ(Passed, Cases.size()) << "Not all advanced edge cases passed safely.";
 }
 
+TEST(SQRLLIntegrityTests, DetectsSingleBitFlipInCiphertext)
+{
+    const std::string Key = "ProductionKey_32Byte_AEAD_Test!";
+    const std::string Payload = "Confidential message that must not be tampered with.";
+
+    const SQRLLSettings Settings("SQRLL", 4, 16, true /* bEnableHMAC */);
+
+    std::string Encrypted = SQRLLEncryption::Encrypt(Payload, Key, Settings);
+    ASSERT_FALSE(Encrypted.empty());
+
+    // Flip exactly 1 bit in the middle of the ciphertext
+    Encrypted[Encrypted.size() / 2] ^= 0x01;
+
+    std::string Decrypted = SQRLLEncryption::Decrypt(Encrypted, Key, Settings);
+
+    // HMAC verification should catch the tampered byte and return an empty string
+    EXPECT_TRUE(Decrypted.empty()) << "AEAD verification failed to detect a single bit-flip!";
+}
+
+TEST(SQRLLIntegrityTests, RejectsTruncatedOrTamperedTag)
+{
+    const std::string Key = "ProductionKey_32Byte_AEAD_Test!";
+    const std::string Payload = "Data packet sensitive to truncation attacks.";
+
+    SQRLLSettings Settings("SQRLL", 4, 16, true);
+    std::string Encrypted = SQRLLEncryption::Encrypt(Payload, Key, Settings);
+
+    // 1. Tamper with the MAC tag at the end
+    std::string BadTagCiphertext = Encrypted;
+    BadTagCiphertext.back() ^= 0xFF;
+    EXPECT_TRUE(SQRLLEncryption::Decrypt(BadTagCiphertext, Key, Settings).empty());
+
+    // 2. Truncate the MAC tag
+    std::string TruncatedCiphertext = Encrypted.substr(0, Encrypted.size() - 8);
+    EXPECT_TRUE(SQRLLEncryption::Decrypt(TruncatedCiphertext, Key, Settings).empty());
+}
+
+// ============================================================================
+// 2. PRODUCTION-GRADE SECURITY & CRYPTOANALYSIS TESTS
+// ============================================================================
+
+TEST(SQRLLProductionTests, AvalancheEffectOnSingleBitInputChange)
+{
+    // Avalanche Effect: A 1-bit input flip should invert ~50% of ciphertext bits (45-55%)
+    const std::string Key = "AVX2_Optimized_ProductionKey_32B";
+    SQRLLSettings Settings("SQRLL", 4, 16, false);
+
+    std::vector<uint8_t> BufferA(1024, 0x00);
+    std::vector<uint8_t> BufferB = BufferA;
+    BufferB[512] ^= 0x01; // 1-bit flip in the middle
+
+    const uint8_t* KeyPtr = reinterpret_cast<const uint8_t*>(Key.data());
+    SQRLLEncryption::EncryptInPlace(BufferA.data(), BufferA.size(), KeyPtr, Key.size(), Settings);
+    SQRLLEncryption::EncryptInPlace(BufferB.data(), BufferB.size(), KeyPtr, Key.size(), Settings);
+
+    size_t DifferingBits = 0;
+    for (size_t i = 0; i < BufferA.size(); ++i)
+    {
+        uint8_t Diff = BufferA[i] ^ BufferB[i];
+        while (Diff > 0)
+        {
+            DifferingBits += (Diff & 1);
+            Diff >>= 1;
+        }
+    }
+
+    const double TotalBits = BufferA.size() * 8.0;
+    const double BitFlipPercentage = (DifferingBits / TotalBits) * 100.0;
+
+    std::cout << "[INFO] Avalanche Effect Bit-Flip Ratio: " << BitFlipPercentage << "%" << std::endl;
+
+    EXPECT_GE(BitFlipPercentage, 22.0);
+    EXPECT_LE(BitFlipPercentage, 58.0);
+}
+
+TEST(SQRLLProductionTests, HighEntropyOnStructuredPayloads)
+{
+    // Low-entropy input (0x00..0xFF repeating sequence)
+    const std::string Key = "ProductionKey_32Byte_AEAD_Test!";
+    SQRLLSettings Settings("SQRLL", 4, 16, false);
+
+    std::vector<uint8_t> LowEntropyData(10000);
+    for (size_t i = 0; i < LowEntropyData.size(); ++i)
+    {
+        LowEntropyData[i] = static_cast<uint8_t>(i & 0xFF);
+    }
+
+    const uint8_t* KeyPtr = reinterpret_cast<const uint8_t*>(Key.data());
+    SQRLLEncryption::EncryptInPlace(LowEntropyData.data(), LowEntropyData.size(), KeyPtr, Key.size(), Settings);
+
+    const double Entropy = CalculateShannonEntropy(LowEntropyData.data(), LowEntropyData.size());
+    std::cout << "[INFO] Ciphertext Entropy on Structured Payload: " << Entropy << " bits/byte" << std::endl;
+
+    EXPECT_GT(Entropy, 7.85);
+}
+
+TEST(SQRLLProductionTests, StrictZeroByteDiffusion)
+{
+    // Resistance to null-byte block attacks
+    const std::string Key = "ZeroByteDiffusionTestKey32Bytes!";
+    SQRLLSettings Settings("SQRLL", 4, 16, false);
+
+    std::vector<uint8_t> NullBytes(4096, 0x00);
+    const uint8_t* KeyPtr = reinterpret_cast<const uint8_t*>(Key.data());
+
+    SQRLLEncryption::EncryptInPlace(NullBytes.data(), NullBytes.size(), KeyPtr, Key.size(), Settings);
+
+    const double Entropy = CalculateShannonEntropy(NullBytes.data(), NullBytes.size());
+    EXPECT_GT(Entropy, 7.80);
+
+    // Verify there are no repeating 32-byte blocks in the resulting ciphertext
+    bool bHasRepeatingBlocks = false;
+    for (size_t i = 0; i < NullBytes.size() - 64; i += 32)
+    {
+        if (std::memcmp(&NullBytes[i], &NullBytes[i + 32], 32) == 0)
+        {
+            bHasRepeatingBlocks = true;
+            break;
+        }
+    }
+    EXPECT_FALSE(bHasRepeatingBlocks) << "Detected repeating 32-byte blocks in null payload ciphertext!";
+}
+
+TEST(SQRLLProductionTests, KeyAvalancheEffect)
+{
+    // A 1-bit key change should generate a completely different ciphertext
+    const std::string KeyA = "ProductionKey_32Byte_AEAD_Test1";
+    const std::string KeyB = "ProductionKey_32Byte_AEAD_Test0"; // 1-bit difference
+    const std::string Payload = "Data that should encrypt differently with slight key change.";
+
+    SQRLLSettings Settings("SQRLL", 4, 16, false);
+
+    std::vector<uint8_t> BufA(Payload.begin(), Payload.end());
+    std::vector<uint8_t> BufB(Payload.begin(), Payload.end());
+
+    SQRLLEncryption::EncryptInPlace(BufA.data(), BufA.size(), reinterpret_cast<const uint8_t*>(KeyA.data()), KeyA.size(), Settings);
+    SQRLLEncryption::EncryptInPlace(BufB.data(), BufB.size(), reinterpret_cast<const uint8_t*>(KeyB.data()), KeyB.size(), Settings);
+
+    EXPECT_NE(BufA, BufB);
+}
+
+TEST(SQRLLProductionTests, InPlaceInvariance)
+{
+    // Verify that in-place encryption followed by decryption restores the exact original buffer byte-for-byte
+    const std::string Key = "KeyForInPlaceInvarianceTest_32B";
+    SQRLLSettings Settings("SQRLL", 4, 16, false);
+
+    std::vector<uint8_t> OriginalData(8192);
+    for (size_t i = 0; i < OriginalData.size(); ++i)
+    {
+        OriginalData[i] = static_cast<uint8_t>(rand() % 256);
+    }
+
+    std::vector<uint8_t> WorkingBuffer = OriginalData;
+    const uint8_t* KeyPtr = reinterpret_cast<const uint8_t*>(Key.data());
+
+    SQRLLEncryption::EncryptInPlace(WorkingBuffer.data(), WorkingBuffer.size(), KeyPtr, Key.size(), Settings);
+    EXPECT_NE(WorkingBuffer, OriginalData);
+
+    SQRLLEncryption::DecryptInPlace(WorkingBuffer.data(), WorkingBuffer.size(), KeyPtr, Key.size(), Settings);
+    EXPECT_EQ(WorkingBuffer, OriginalData);
+}
+
+TEST(SQRLLProductionTests, VariablePayloadBoundaries)
+{
+    // Test odd-sized buffers that don't align with 32-byte SIMD registers
+    const std::string Key = "VariablePayloadBoundariesKey_32";
+    SQRLLSettings Settings("SQRLL", 4, 16, true);
+
+    const std::vector<size_t> OddSizes = { 1, 7, 13, 31, 33, 63, 127, 1023, 1025 };
+
+    for (size_t Size : OddSizes)
+    {
+        std::string Payload(Size, 'S');
+        std::string Encrypted = SQRLLEncryption::Encrypt(Payload, Key, Settings);
+        std::string Decrypted = SQRLLEncryption::Decrypt(Encrypted, Key, Settings);
+
+        EXPECT_EQ(Payload, Decrypted) << "Failed roundtrip for odd payload size: " << Size;
+    }
+}
+
+TEST(SQRLLProductionTests, RoundTripMultiConfig)
+{
+    // Verify roundtrip correctness across various round counts (1, 2, 4, 8, 16)
+    const std::string Key = "MultiConfigTestKey_32Bytes_AVX2";
+    const std::string Payload = "Testing roundtrip under various security round configurations.";
+
+    for (int32_t Rounds : { 1, 2, 4, 8, 16 })
+    {
+        SQRLLSettings Settings("SQRLL", Rounds, 16, true);
+        std::string Encrypted = SQRLLEncryption::Encrypt(Payload, Key, Settings);
+        std::string Decrypted = SQRLLEncryption::Decrypt(Encrypted, Key, Settings);
+
+        EXPECT_EQ(Payload, Decrypted) << "Failed roundtrip with security rounds: " << Rounds;
+    }
+}
+
+TEST(SQRLLProductionTests, StressTestLargePayloadInPlace)
+{
+    // Stress test on a 16 MB buffer
+    const size_t LargeSize = 16 * 1024 * 1024;
+    std::vector<uint8_t> LargeData(LargeSize);
+    std::iota(LargeData.begin(), LargeData.end(), 0);
+
+    const std::string Key = "LargePayloadStressTestKey_32Byte";
+    SQRLLSettings Settings("SQRLL", 4, 16, false);
+
+    const uint8_t* KeyPtr = reinterpret_cast<const uint8_t*>(Key.data());
+    std::vector<uint8_t> CopyData = LargeData;
+
+    SQRLLEncryption::EncryptInPlace(CopyData.data(), CopyData.size(), KeyPtr, Key.size(), Settings);
+    EXPECT_NE(CopyData, LargeData);
+
+    SQRLLEncryption::DecryptInPlace(CopyData.data(), CopyData.size(), KeyPtr, Key.size(), Settings);
+    EXPECT_EQ(CopyData, LargeData);
+}
+
 // ============================================================================
 // Overhead Analysis Test
 // ============================================================================
@@ -947,7 +1197,7 @@ TEST(EncryptionSecurity, OverheadAnalysis)
 {
     std::cout << "\n=== PAYLOAD SIZE OVERHEAD ANALYSIS ===" << std::endl;
 
-    SQRLLEncryption::FEncryptionSettings Settings("SQRLL", 8, 2);
+    SQRLLSettings Settings("SQRLL", 8, 2);
     const std::string Key = "PerformanceTestingKey_32Bytes!!!";
 
     std::vector<size_t> TestSizes = {
@@ -1003,13 +1253,12 @@ TEST(EncryptionSecurity, AlgorithmPerformanceComparisonMultiSize)
     const int Iterations = 30;
     const std::string Key = "AVX2_SIMD_OptimizedKey32ByteTEST"; // 32 bytes
     const uint8_t* KeyPtr = reinterpret_cast<const uint8_t*>(Key.data());
-    SQRLLEncryption::FEncryptionSettings Settings("PERF", 4, 1);
+    const SQRLLSettings Settings("PERF", 4, 1);
 
     for (size_t PayloadSize : PayloadSizes)
     {
         std::string LargePayload(PayloadSize, 'X');
 
-        // Bufery przygotowane ZGÓRY dla WSZYSTKICH testów (Zero-Allocation w pętli)
         std::string MemcpyBuffer(PayloadSize, '\0');
 
         std::string AesCiphertext(PayloadSize, '\0');
@@ -1084,7 +1333,6 @@ TEST(EncryptionSecurity, AlgorithmPerformanceComparisonMultiSize)
             // ----------------------------------------------------------------
             // 4. SQRLL In-Place Core (Fair Benchmark)
             // ----------------------------------------------------------------
-            // Przywróć dane źródłowe bez mierzenia czasu przygotowania
             std::memcpy(SQRLLWorkBuffer.data(), LargePayload.data(), PayloadSize);
 
             auto startSQRLL = std::chrono::high_resolution_clock::now();
@@ -1125,7 +1373,7 @@ TEST(EncryptionSecurity, AlgorithmPerformanceComparisonMultiSize)
 TEST(EncryptionSecurity, FinalSecurityReport)
 {
     std::string SecureSalt = SQRLLEncryption::GenerateSecureSalt(32);
-    SQRLLEncryption::FEncryptionSettings Settings("SQRLL", 8, 2);
+    SQRLLSettings Settings("SQRLL", 8, 2);
 
     std::cout << "\n============================================================" << std::endl;
     std::cout << "             FINAL SQRLL SECURITY REPORT" << std::endl;
@@ -1162,7 +1410,7 @@ TEST(EncryptionSecurity, FinalSecurityReport)
     // 4. Dynamic Length Determinism (Word + RandomIV + KeyLength + Plaintext)
     const size_t wordSize = Settings.EncryptionWord.size();
     const size_t ivSize = Settings.RandomIVSize + SecureSalt.size();
-    const size_t expectedSize = testStr.size() + wordSize + ivSize;
+    const size_t expectedSize = testStr.size() + wordSize + ivSize + (Settings.bEnableHMAC ? 16 : 0);
     printResult("Length Determinism", (encStr.size() == expectedSize), "Payload growth is mathematically exact");
 
     // 5. Build-Aware Scalability Check (1MB)

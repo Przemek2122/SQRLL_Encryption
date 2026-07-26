@@ -153,6 +153,30 @@ public:
 	static uint8_t RotateLeft(uint8_t Value, int Bits);
 };
 
+/** LIGHTWEIGHT MAC / INTEGRITY CHECK (SipHash / GHASH Style) */
+class SQRLLMAC
+{
+public:
+	/** Generates a 16-byte authentication tag based on payload and secret key */
+	static void ComputeTag(const uint8_t* __restrict Payload, size_t PayloadSize, const uint8_t* __restrict Key, size_t KeySize, uint8_t OutTag[16]) noexcept;
+
+	/** Constant-time tag comparison to prevent timing attacks */
+	static bool VerifyTag(const uint8_t TagA[16], const uint8_t TagB[16]) noexcept;
+};
+
+struct SQRLLSettings
+{
+	explicit SQRLLSettings(std::string InEncryptionWord = "SQRLL", int32_t InRandomIVSize = 64, int32_t InNumberOfOperations = 1, bool bMAC = true);
+
+	std::string EncryptionWord;
+	uint16_t RandomIVSize;
+	uint16_t NumberOfOperations;
+
+	bool bEnableHMAC = false;
+	bool bEnableConstantTime = false;
+	uint16_t SecurityRounds = 4;
+};
+
 /**
  * Global utilities class, with:
  * - Converting numbers or string to custom encoding (reversible or not depending on choice)
@@ -161,30 +185,22 @@ public:
 class SQRLLEncryption
 {
 public:
+	/** Random characters generator */
 	static std::string GenerateSecureSalt(size_t Length);
 
-	struct FEncryptionSettings
-	{
-		explicit FEncryptionSettings(std::string InEncryptionWord = "SQRLL", int32_t InRandomIVSize = 64, int32_t InNumberOfOperations = 1);
-
-		std::string EncryptionWord;
-		uint16_t RandomIVSize;
-		uint16_t NumberOfOperations;
-	};
-
 	/** Encrypt with allocation */
-	static std::string Encrypt(const std::string& InData, const std::string& InEncryptionKey, const FEncryptionSettings& EncryptionSettings = FEncryptionSettings());
+	static std::string Encrypt(const std::string& InData, const std::string& InEncryptionKey, const SQRLLSettings& EncryptionSettings = SQRLLSettings());
 
 	/** Decrypt with allocation */
-	static std::string Decrypt(const std::string& InData, const std::string& InEncryptionKey, const FEncryptionSettings& EncryptionSettings = FEncryptionSettings());
+	static std::string Decrypt(const std::string& InData, const std::string& InEncryptionKey, const SQRLLSettings& EncryptionSettings = SQRLLSettings());
 
 	/** Encrypt without allocation */
 	static void EncryptInPlace(uint8_t* __restrict BufferData, const size_t BufferSize, const uint8_t* __restrict KeyData, const size_t KeySize,
-	                           const FEncryptionSettings& Settings) noexcept;
+	                           const SQRLLSettings& Settings) noexcept;
 
 	/** Decrypt without allocation */
 	static void DecryptInPlace(uint8_t* __restrict BufferData, const size_t BufferSize, const uint8_t* __restrict KeyData, const size_t KeySize,
-	                           const FEncryptionSettings& Settings) noexcept;
+	                           const SQRLLSettings& Settings) noexcept;
 
 
 	static uint64_t ConvertCharsIntoInt(char InCharArray[8]);

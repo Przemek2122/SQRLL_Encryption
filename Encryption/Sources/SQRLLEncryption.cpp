@@ -528,125 +528,119 @@ std::array<char, 8> SQRLLEncryption::ConvertIntIntoChars(const uint64_t InData)
 
 std::string SQRLLEncryption::FromBaseN(std::string_view InEncoded, std::string_view InCharSet)
 {
-	// Validate input
-	if (InCharSet.empty() || InEncoded.empty())
-		return "";
+    if (InCharSet.empty() || InEncoded.empty())
+        return "";
 
-	const size_t BaseSize = InCharSet.size();
+    const size_t BaseSize = InCharSet.size();
 
-	// Build char->value lookup
-	std::unordered_map<char, size_t> CharToDigit;
-	for (size_t i = 0; i < BaseSize; ++i)
-		CharToDigit[InCharSet[i]] = i;
+    std::vector<int> CharToDigit(256, -1);
+    for (size_t i = 0; i < BaseSize; ++i)
+    {
+        CharToDigit[static_cast<unsigned char>(InCharSet[i])] = static_cast<int>(i);
+    }
 
-	// Result as big-endian bytes (most significant first)
-	std::vector<uint8_t> Result = { 0 };
+    size_t Zeroes = 0;
+    while (Zeroes < InEncoded.size() && InEncoded[Zeroes] == InCharSet[0])
+    {
+        ++Zeroes;
+    }
 
-	// Process each digit: Result = Result * Base + Digit
-	for (char Ch : InEncoded)
-	{
-		auto It = CharToDigit.find(Ch);
-		if (It == CharToDigit.end())
-			return ""; // Invalid character
+    const size_t MaxOutputLen = static_cast<size_t>(InEncoded.size() * (std::log2(static_cast<double>(BaseSize)) / 8.0)) + 1;
 
-		size_t Digit = It->second;
+    std::vector<unsigned char> DecodedBytes(MaxOutputLen, 0);
+    size_t DecodedLen = 1;
 
-		// Multiply entire Result by BaseSize
-		size_t Carry = 0;
-		for (int i = Result.size() - 1; i >= 0; --i) // Right-to-left
-		{
-			size_t Temp = Result[i] * BaseSize + Carry;
-			Result[i] = static_cast<uint8_t>(Temp & 0xFF);
-			Carry = Temp >> 8;
-		}
-		while (Carry > 0)
-		{
-			Result.insert(Result.begin(), static_cast<uint8_t>(Carry & 0xFF));
-			Carry >>= 8;
-		}
+    for (size_t i = Zeroes; i < InEncoded.size(); ++i)
+    {
+        int Digit = CharToDigit[static_cast<unsigned char>(InEncoded[i])];
+        if (Digit == -1)
+            return ""; // Invalid character encountered
 
-		// Add Digit to Result
-		Carry = Digit;
-		for (int i = Result.size() - 1; i >= 0 && Carry > 0; --i)
-		{
-			size_t Temp = Result[i] + Carry;
-			Result[i] = static_cast<uint8_t>(Temp & 0xFF);
-			Carry = Temp >> 8;
-		}
-		while (Carry > 0)
-		{
-			Result.insert(Result.begin(), static_cast<uint8_t>(Carry & 0xFF));
-			Carry >>= 8;
-		}
-	}
+        uint32_t Carry = static_cast<uint32_t>(Digit);
+        for (size_t j = 0; j < DecodedLen; ++j)
+        {
+            Carry += static_cast<uint32_t>(DecodedBytes[j]) * BaseSize;
+            DecodedBytes[j] = static_cast<unsigned char>(Carry & 0xFF); // Carry % 256
+            Carry >>= 8; // Carry / 256
+        }
 
-	return std::string(reinterpret_cast<const char*>(Result.data()), Result.size());
+        while (Carry > 0)
+        {
+            DecodedBytes[DecodedLen++] = static_cast<unsigned char>(Carry & 0xFF);
+            Carry >>= 8;
+        }
+    }
+
+    std::string Result;
+    Result.reserve(Zeroes + DecodedLen);
+
+    Result.append(Zeroes, '\0');
+
+	for (size_t i = DecodedLen; i > 0; --i)
+    {
+        if (i == DecodedLen && DecodedBytes[i - 1] == 0 && DecodedLen > 1)
+        {
+            continue;
+        }
+        Result.push_back(static_cast<char>(DecodedBytes[i - 1]));
+    }
+
+    return Result;
 }
 
 std::string SQRLLEncryption::ToBaseN(const std::string_view InData, const std::string_view InCharSet)
 {
-	// Validate input
-	if (InCharSet.empty())
-	{
-		return ""; // Can't convert without characters
-	}
-	const size_t BaseSize = InCharSet.size();
+	if (InCharSet.empty()) return "";
+	if (InData.empty()) return "";
 
-	// Get raw bytes
-	const unsigned char* Bytes = reinterpret_cast<const unsigned char*>(InData.data());
+	const size_t BaseSize = InCharSet.size();
+	const auto* Bytes = reinterpret_cast<const unsigned char*>(InData.data());
 	const size_t ByteCount = InData.size();
 
-	// Handle empty input
-	if (ByteCount == 0)
-	{
-		return std::string(1, InCharSet[0]);
+	// Count leading zero bytes (requires dedicated prefix padding)
+	size_t Zeroes = 0;
+	while (Zeroes < ByteCount && Bytes[Zeroes] == 0) {
+		++Zeroes;
 	}
 
-	// Convert bytes to digits in target base
-	std::vector<size_t> Digits = { 0 };
+	// Pre-allocate buffer for target base digits
+	// Estimated max output length: log256(BaseSize) * ByteCount + 1
+	const size_t MaxOutputLen = static_cast<size_t>(ByteCount * (8.0 / std::log2(static_cast<double>(BaseSize)))) + 1;
+	std::vector<unsigned char> Digits(MaxOutputLen, 0);
+	size_t DigitsLen = 1;
 
-	for (size_t i = 0; i < ByteCount; ++i)
-	{
-		// Multiply current number by 256 and add next byte
-		size_t Carry = Bytes[i];
-		for (size_t& Digit : Digits)
-		{
-			size_t Temp = Digit * 256 + Carry;
-			Digit = Temp % BaseSize;
-			Carry = Temp / BaseSize;
+	// Convert Base-256 raw bytes to Base-N digits
+	for (size_t i = Zeroes; i < ByteCount; ++i) {
+		uint32_t Carry = Bytes[i];
+		for (size_t j = 0; j < DigitsLen; ++j) {
+			Carry += static_cast<uint32_t>(Digits[j]) << 8; // Multiply by 256
+			Digits[j] = static_cast<unsigned char>(Carry % BaseSize);
+			Carry /= BaseSize;
 		}
-
-		// Add new digits if needed
-		while (Carry > 0)
-		{
-			Digits.push_back(Carry % BaseSize);
+		while (Carry > 0) {
+			Digits[DigitsLen++] = static_cast<unsigned char>(Carry % BaseSize);
 			Carry /= BaseSize;
 		}
 	}
 
-	// Calculate minimum length to preserve all data
-	const size_t MinDigitsPerByte = static_cast<size_t>(
-		std::ceil(8.0 * std::numbers::ln2 / std::log(static_cast<double>(BaseSize)))
-	);
-	const size_t MinOutputLength = ByteCount * MinDigitsPerByte;
-
-	// Pad with leading zeros to ensure all data is represented
-	while (Digits.size() < MinOutputLength)
-	{
-		Digits.push_back(0);
-	}
-
-	// Build result string (digits are in reverse order)
+	// Construct result string using the character set
 	std::string Result;
-	Result.reserve(Digits.size());
-	for (const unsigned long & Digit : std::ranges::reverse_view(Digits))
-	{
-		Result += InCharSet[Digit];
+	Result.reserve(Zeroes + DigitsLen);
+
+	// Append leading zeroes (mapped to the first character of the charset)
+	Result.append(Zeroes, InCharSet[0]);
+
+	// Append actual digits in reverse order
+	for (size_t i = DigitsLen; i > 0; --i) {
+		// Skip leading zeroes in the Digits array caused by over-allocation
+		if (i == DigitsLen && Digits[i - 1] == 0 && DigitsLen > 1) {
+			continue;
+		}
+		Result.push_back(InCharSet[Digits[i - 1]]);
 	}
 
 	return Result;
 }
-
 std::string SQRLLEncryption::ToBaseN_Irreversible(const std::string_view InData, const std::string_view InCharSet)
 {
 	// Validate input

@@ -60,6 +60,7 @@ public:
 	static constexpr std::string_view HEX_UPPER = "0123456789ABCDEF";
 	static constexpr std::string_view BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"; /** 0-9, a-z */
 	static constexpr std::string_view BASE62 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"; /** 0-9, a-z, A-Z */
+	static constexpr std::string_view BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ""abcdefghijklmnopqrstuvwxyz""0123456789+/"; /** 0-9, a-z, A-Z, +/ */
 	static constexpr std::string_view BASE_EMAIL = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@._-+/*="; /** 0-9, a-z, A-Z, @._-+/*= */
 	static constexpr std::string_view BASE_SIMPLE_PASSWORD = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ !@#$%^&*()-_=+[]{}|/\\.,<>;:'?~\""; /** 0-9, a-z, A-Z, Special chars */
 };
